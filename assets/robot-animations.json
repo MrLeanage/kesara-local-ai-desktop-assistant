@@ -1,0 +1,37 @@
+{
+  "bake_done": true,
+  "clips": [
+    {
+      "name": "Idle",
+      "count": 80,
+      "duration": 3.3333332538604736,
+      "fps": 24
+    },
+    {
+      "name": "Wave",
+      "count": 45,
+      "duration": 1.8333333730697632,
+      "fps": 24
+    },
+    {
+      "name": "Yes",
+      "count": 40,
+      "duration": 1.6666666269302368,
+      "fps": 24
+    },
+    {
+      "name": "No",
+      "count": 40,
+      "duration": 1.6666666269302368,
+      "fps": 24
+    },
+    {
+      "name": "ThumbsUp",
+      "count": 39,
+      "duration": 1.5833333730697632,
+      "fps": 24
+    }
+  ],
+  "width": 300,
+  "height": 380
+}

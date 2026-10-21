@@ -1,0 +1,8 @@
+faster-whisper==1.2.1
+av==16.1.0
+sounddevice==0.5.6
+Pillow==13.0.0
+vosk==0.3.45
+mediapipe==1.1.1
+opencv-contrib-python==5.0.0.93
+pywebview==6.2.1

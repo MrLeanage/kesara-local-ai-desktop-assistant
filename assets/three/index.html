@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:300px;height:300px;background:transparent;overflow:hidden}#avatar{width:300px;height:300px}</style><script>window.errors=[];window.addEventListener("error",e=>window.errors.push(JSON.stringify({message:e.message,src:e.target.src,tag:e.target.tagName,type:e.type})),true);window.addEventListener("unhandledrejection",e=>window.errors.push(String(e.reason)));</script><script type="importmap">{"imports":{"three":"./vendor/build/three.module.js","three/addons/":"./vendor/examples/jsm/"}}</script></head><body><div id="avatar"></div><script type="module">
+import {TalkingHead} from './modules/talkinghead.mjs';
+if(!window.pywebview?.api)await new Promise(resolve=>window.addEventListener('pywebviewready',resolve,{once:true}));
+let mode='idle',lastGesture=0,lastMode='idle',state={mode:'idle',viseme:0};
+const visemes=['sil','aa','aa','O','E','RR','I','U','O','aa','O','aa','aa','RR','nn','SS','CH','TH','FF','DD','kk','PP'];
+window.setMode=m=>{mode=m};
+try{
+const head=new TalkingHead(document.getElementById('avatar'),{cameraView:'upper',modelFPS:20,modelPixelRatio:.667,lightAmbientIntensity:1,lightDirectIntensity:6,lipsyncModules:[],cameraRotateEnable:false,cameraPanEnable:false,cameraZoomEnable:false,avatarMood:'neutral'});
+window.head=head;
+await head.showAvatar({url:'./avatars/avatarsdk.glb',body:'M',avatarMood:'neutral',lipsyncLang:'en',retarget:{Neck:{z:-.01,rx:-.15},Neck1:{z:-.01,rx:-.15},Neck2:{z:-.01,rx:-.15},LeftShoulder:{rz:-.3},RightShoulder:{rz:.3},scaleToEyesLevel:1,origin:{y:-.1}},baseline:{headRotateX:-.04,eyeBlinkLeft:.05,eyeBlinkRight:.05}});
+head.gestureTemplates.explain=structuredClone(head.gestureTemplates.handup);
+Object.assign(head.gestureTemplates.explain,{'LeftArm.rotation':{x:1.15,y:-.3,z:.6},'LeftForeArm.rotation':{x:-.3,y:-.1,z:1.3},'LeftHand.rotation':{x:-.2,y:0,z:.1}});
+await window.pywebview.api.ready({bones:Object.keys(head.poseBase?.props||{}).length,morphs:Object.keys(head.mtAvatar).length,gestures:Object.keys(head.gestureTemplates)});
+async function frame(){
+ try{
+   mode=state.mode||'idle';
+   const now=performance.now();
+   for(const v of new Set(visemes))head.setValue('viseme_'+v,mode==='speaking'&&v===visemes[state.viseme||0]? .65:0);
+   head.setValue('jawOpen',mode==='speaking'&&state.viseme>0?.12:0);
+   if(mode!==lastMode){head.lookAtCamera(800);if(mode==='listening')head.playGesture('side',1.5,false,1000);lastMode=mode;}
+   cancelAnimationFrame(head._raf);head.animate(now);cancelAnimationFrame(head._raf);
+   if(mode==='speaking'&&now-lastGesture>6500){head.playGesture('explain',2,Math.random()>.5,1100);lastGesture=now;}
+   state=await window.pywebview.api.frame(head.renderer.domElement.toDataURL('image/png'));
+ }catch(e){await window.pywebview.api.error(String(e));}
+ setTimeout(frame,10);
+}
+frame();
+}catch(e){await window.pywebview.api.error(String(e));}
+</script></body></html>

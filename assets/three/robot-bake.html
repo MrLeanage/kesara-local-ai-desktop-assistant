@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"./vendor/build/three.module.js","three/addons/":"./vendor/examples/jsm/"}}</script></head><body style="margin:0;background:transparent"><script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+if(!window.pywebview?.api)await new Promise(resolve=>window.addEventListener('pywebviewready',resolve,{once:true}));
+try{
+const scene=new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff,0x778899,2.2));
+const light=new THREE.DirectionalLight(0xffffff,2.5);light.position.set(3,8,6);scene.add(light);
+const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setSize(300,380);renderer.setPixelRatio(1);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;document.body.appendChild(renderer.domElement);
+const gltf=await new GLTFLoader().loadAsync('./avatars/RobotExpressive.glb');scene.add(gltf.scene);gltf.scene.updateMatrixWorld(true);
+const mixer=new THREE.AnimationMixer(gltf.scene),bounds=new THREE.Box3();
+for(const name of ['Idle','Wave','Yes','No','ThumbsUp']){
+ const clip=THREE.AnimationClip.findByName(gltf.animations,name),action=mixer.clipAction(clip);
+ for(let i=0;i<=12;i++){
+  mixer.stopAllAction();action.reset().play();mixer.setTime(clip.duration*i/12);gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse(node=>{if(node.isSkinnedMesh)node.computeBoundingBox();});
+  bounds.union(new THREE.Box3().setFromObject(gltf.scene));
+ }
+}
+const size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+const camera=new THREE.PerspectiveCamera(32,300/380,.1,100);
+const distance=Math.max(size.y/(2*Math.tan(16*Math.PI/180)),Math.max(Math.abs(bounds.min.x),Math.abs(bounds.max.x))/(Math.tan(16*Math.PI/180)*(300/380)))/.92+size.z/2;
+camera.position.set(0,center.y,distance);camera.lookAt(0,center.y,0);
+const face=gltf.scene.getObjectByName('Head_4');
+const clips=[];
+for(const name of ['Idle','Wave','Yes','No','ThumbsUp']){
+ const clip=THREE.AnimationClip.findByName(gltf.animations,name),action=mixer.clipAction(clip);action.setLoop(THREE.LoopOnce,1);action.clampWhenFinished=true;
+ const count=Math.ceil(clip.duration*24);
+ for(let i=0;i<count;i++){
+   mixer.stopAllAction();action.reset().play();mixer.setTime(i/24);
+   for(let open=0;open<2;open++){
+     if(face?.morphTargetDictionary){face.morphTargetInfluences.fill(0);face.morphTargetInfluences[face.morphTargetDictionary.Surprised]=open*.45;}
+     renderer.render(scene,camera);
+     await window.pywebview.api.frame(renderer.domElement.toDataURL('image/png'),{clip:name,index:i,open});
+   }
+ }
+ clips.push({name,count,duration:clip.duration,fps:24});
+}
+await window.pywebview.api.ready({bake_done:true,clips,width:300,height:380});
+}catch(e){await window.pywebview.api.error(String(e));}
+</script></body></html>

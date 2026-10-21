@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+*.png binary
+*.gif binary
+*.zip binary
+*.glb binary
+*.task binary
+*.npz binary
+*.ico binary

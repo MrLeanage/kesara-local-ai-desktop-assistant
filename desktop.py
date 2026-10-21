@@ -1,0 +1,624 @@
+"""Kesara's local desktop chat and voice interface."""
+import json
+import re
+from pathlib import Path
+import queue
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+import kesara as core
+from character import Character
+from interaction import Ambient, Camera, command as voice_command
+from voice import Speaker, microphones, record, load_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
+
+BG='#10151f'
+PANEL='#171f2c'
+CARD='#202b3b'
+TEXT='#e8edf5'
+MUTED='#9cacc1'
+ACCENT='#65e1bb'
+
+class App:
+    def __init__(self,root):
+        self.root=root
+        self.events=queue.Queue()
+        self.messages=[]
+        self.streaming_reply=False
+        self.model_ready=False
+        self.conversation=False
+        self.pending_voice_send=False
+        self.speech_in_progress=False
+        self.speech_id=0
+        self.speech_stream_queue=None
+        self.speech_stream_cursor=0
+        self.companion=None
+        self.home=None
+        self.standby_phase="Say Kesara"
+        self.last_standby_heard=""
+        self.hands_free=False
+        self.camera_enabled=False
+        self.camera_active=False
+        self.ambient=Ambient(self.emit)
+        self.camera=Camera(self.emit)
+        self.root.after(250,self.interaction_tick)
+        self.cwd=core.PROJECTS.resolve()
+        self.cancelled=threading.Event()
+        self.mic_stop=threading.Event()
+        self.speaker=Speaker()
+        self.viseme=0
+        self.speaker.on_viseme=lambda value:self.emit('viseme',value)
+        self.busy=False
+        self.listening=False
+        self.voice_ready=False
+        self.recording_seconds=0
+        self.device=None
+        self.pending=None
+        self.approval_window=None
+        self.alive=True
+        root.title('Kesara — Local AI Assistant')
+        width=min(1120,root.winfo_screenwidth()-60)
+        height=min(780,root.winfo_screenheight()-100)
+        root.geometry(f'{width}x{height}+20+20')
+        root.minsize(820,500)
+        root.configure(bg=BG)
+        root.protocol('WM_DELETE_WINDOW',self.close)
+        root.option_add('*Font',('Segoe UI',10))
+
+        sidebar=tk.Frame(root,bg=PANEL,width=230,padx=22,pady=16)
+        sidebar.pack(side='left',fill='y')
+        sidebar.pack_propagate(False)
+        self.avatar=Character(sidebar)
+        self.avatar.pack(anchor='center')
+        self.avatar.bind('<Button-1>',lambda event:self.open_companion())
+        tk.Label(sidebar,text='KESARA',bg=PANEL,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='center')
+        tk.Label(sidebar,text='Click character for a larger view',bg=PANEL,fg=MUTED,font=('Segoe UI',8)).pack(anchor='center',pady=(0,12))
+        self.new_button=self.button(sidebar,'+  New conversation',self.new_chat)
+        self.new_button.pack(fill='x',pady=5)
+        self.folder_button=self.button(sidebar,'Choose project folder',self.choose_folder)
+        self.folder_button.pack(fill='x',pady=5)
+        self.button(sidebar,'Settings',self.settings).pack(fill='x',pady=5)
+        tk.Label(sidebar,text='WORKING FOLDER',bg=PANEL,fg=MUTED,font=('Segoe UI',8,'bold')).pack(anchor='w',pady=(12,6))
+        self.folder_text=tk.StringVar(value=str(self.cwd))
+        tk.Label(sidebar,textvariable=self.folder_text,bg=PANEL,fg=TEXT,wraplength=185,justify='left',font=('Segoe UI',9)).pack(anchor='w')
+        bottom=tk.Frame(sidebar,bg=PANEL)
+        bottom.pack(side='bottom',fill='x')
+        tk.Label(bottom,text='●  LOCAL INFERENCE',bg=PANEL,fg=ACCENT,font=('Segoe UI',9,'bold')).pack(anchor='w')
+        self.model_state=tk.StringVar(value='Qwen2.5-Coder · 3B\nPreparing local AI...')
+        tk.Label(bottom,textvariable=self.model_state,bg=PANEL,fg=MUTED,justify='left',font=('Segoe UI',9)).pack(anchor='w',pady=(7,0))
+
+        main=tk.Frame(root,bg=BG,padx=26,pady=24)
+        main.pack(side='left',fill='both',expand=True)
+        header=tk.Frame(main,bg=BG)
+        header.pack(fill='x')
+        tk.Label(header,text='Let’s build something.',bg=BG,fg=TEXT,font=('Segoe UI',19,'bold')).pack(side='left')
+        self.conversation_button=self.button(header,'Start conversation',self.toggle_conversation,accent=True)
+        self.conversation_button.pack(side='right')
+        self.speak_enabled=tk.BooleanVar(value=True)
+        tk.Label(main,text='Code, prepare projects, and work with your files.',bg=BG,fg=MUTED).pack(anchor='w',pady=(7,18))
+
+        # Reserve the composer and voice controls before allocating the chat pane.
+        controls=tk.Frame(main,bg=BG)
+        controls.pack(side='bottom',fill='x')
+        self.chat=scrolledtext.ScrolledText(main,bg=PANEL,fg=TEXT,insertbackground=TEXT,relief='flat',padx=18,pady=16,wrap='word',font=('Segoe UI',11),state='disabled',height=8)
+        self.chat.pack(fill='both',expand=True)
+        for tag,color in [('you',ACCENT),('kesara','#a9baff'),('tool',MUTED),('system','#e6be79')]:
+            self.chat.tag_configure(tag,foreground=color)
+        self.chat.tag_configure('label',font=('Segoe UI',9,'bold'),spacing1=14,spacing3=5)
+        self.append('Kesara','What would you like to build? Type a message, or click Talk.\n\nWhen you finish speaking, click Done, check your words, then Send. I’ll ask before changing files or running commands.','kesara')
+
+        self.status=tk.StringVar(value='Ready · All model and voice processing stays on this PC')
+        tk.Label(controls,textvariable=self.status,bg=BG,fg=MUTED,anchor='w',wraplength=740,justify='left',font=('Segoe UI',9)).pack(fill='x',pady=(12,8))
+        self.composer=tk.Text(controls,height=3,bg=CARD,fg=TEXT,insertbackground=ACCENT,relief='flat',padx=12,pady=10,wrap='word',font=('Segoe UI',11))
+        self.composer.pack(fill='x')
+        self.composer.bind('<Control-Return>',lambda event:self.send())
+        bar=tk.Frame(controls,bg=BG)
+        bar.pack(fill='x',pady=(10,0))
+        self.mic_button=self.button(bar,'Loading voice...',self.toggle_mic)
+        self.mic_button.pack(side='left')
+        self.mic_button.configure(state='disabled')
+        self.level=ttk.Progressbar(bar,length=65,maximum=100)
+        self.level.pack(side='left',padx=(8,0))
+        self.send_button=self.button(bar,'Send  →',self.primary_action,accent=True)
+        self.send_button.pack(side='right')
+        tk.Label(controls,text='Ctrl+Enter to send  ·  Voice input: English  ·  Commands run with your Windows permissions',bg=BG,fg=MUTED,font=('Segoe UI',8)).pack(anchor='w',pady=(10,0))
+        root.after(60,self.poll)
+        def prepare_voice():
+            try:
+                load_model()
+                self.emit('voice_ready',None)
+            except Exception as exc:
+                diagnostic('initialization_error',error=str(exc))
+                self.emit('voice_error','Speech recognition could not load: '+str(exc))
+                self.emit('voice_unavailable',None)
+        threading.Thread(target=prepare_voice,daemon=True).start()
+        def prepare_speech():
+            try:self.speaker.prepare()
+            except Exception as exc:diagnostic('speech_warm_error',error=str(exc))
+        threading.Thread(target=prepare_speech,daemon=True).start()
+        def prepare_model():
+            try: core.warm_model(self.cwd);self.emit('model_ready',None)
+            except Exception as exc:self.emit('model_warm_error',str(exc))
+        threading.Thread(target=prepare_model,daemon=True).start()
+        self.composer.focus_set()
+
+    def button(self,parent,text,command,accent=False):
+        return tk.Button(parent,text=text,command=command,bg=ACCENT if accent else CARD,fg=BG if accent else TEXT,activebackground='#8af0cf' if accent else '#304159',activeforeground=BG if accent else TEXT,relief='flat',borderwidth=0,padx=13,pady=9,cursor='hand2',font=('Segoe UI',10,'bold' if accent else 'normal'))
+
+    def append(self,name,text,tag):
+        self.chat.configure(state='normal')
+        self.chat.insert('end',name.upper()+'\n',('label',tag))
+        self.chat.insert('end',text+'\n\n',tag)
+        self.chat.configure(state='disabled')
+        self.chat.see('end')
+
+    def emit(self,kind,value): self.events.put((kind,value))
+
+    def expression(self,mode):
+        self.avatar.set_state(mode)
+        if self.companion and self.companion.winfo_exists():self.companion.set_state(mode)
+
+    def open_companion(self):
+        if self.companion and self.companion.winfo_exists():
+            self.companion.winfo_toplevel().lift();return
+        window=tk.Toplevel(self.root);window.title('Kesara — Character');window.geometry('380x430');window.configure(bg=PANEL)
+        self.companion=Character(window,width=360,height=352);self.companion.pack(fill='both',expand=True,padx=10,pady=10)
+        self.companion.set_state(self.avatar.mode)
+        tk.Label(window,text='Kesara · Animated AI assistant',bg=PANEL,fg=MUTED).pack(pady=(0,14))
+
+    def interaction_tick(self):
+        if not self.alive:return
+        mode=None
+        if self.hands_free and self.voice_ready and self.model_ready and not self.listening:
+            mode='quiet' if self.busy or self.speech_in_progress else ('wake' if not self.conversation else None)
+        self.ambient.configure(mode,self.device)
+        if self.camera_enabled and (not self.camera.thread or not self.camera.thread.is_alive()):self.camera.start()
+        state={'voice_ready':self.voice_ready,'model_ready':self.model_ready,'name_activation':self.hands_free,'conversation':self.conversation,'recording':self.listening,'busy':self.busy,'speaking':self.speech_in_progress,'camera_on':self.camera_active,'standby_phase':self.standby_phase,'draft_characters':len(self.composer.get('1.0','end').strip())}
+        if state!=getattr(self,'last_runtime_state',None):
+            self.last_runtime_state=state
+            target=core.BASE/'runtime-state.json'
+            temp=target.with_suffix('.tmp');temp.write_text(json.dumps(state),encoding='utf-8');temp.replace(target)
+        self.root.after(250,self.interaction_tick)
+
+    def toggle_hands_free(self):
+        self.hands_free=not self.hands_free
+        if not self.hands_free:self.ambient.configure(None)
+        self.status.set('Wake listening on. Say Kesara, pause, then speak when Listening appears.' if self.hands_free else 'Wake listening off.')
+
+    def toggle_camera(self):
+        self.camera_enabled=not self.camera_enabled
+        if self.camera_enabled:self.camera.start()
+        else:self.camera.close()
+
+    def quiet(self):
+        self.ambient.configure(None)
+        self.end_conversation();self.stop()
+        self.status.set('Idle. Say Kesara to wake me.' if self.hands_free else 'Idle. Click to talk.')
+
+    def preserve_draft(self):
+        text=self.composer.get('1.0','end').strip()
+        if not text:return
+        self.append('Unsent draft (not submitted)',text,'system')
+        with (core.BASE/'unsent-drafts.jsonl').open('a',encoding='utf-8') as file:
+            file.write(json.dumps({'text':text})+'\n')
+        self.composer.delete('1.0','end')
+
+    def wake_up(self,text=None):
+        if self.pending or self.busy or self.listening or self.speech_in_progress:return
+        if not self.conversation:
+            self.preserve_draft()
+            self.root.bell()
+            self.toggle_conversation(initial_message=text,acknowledge=not bool(text))
+
+    def toggle_conversation(self,initial_message=None,acknowledge=False):
+        if self.conversation:
+            self.end_conversation();return
+        if not self.voice_ready or not self.model_ready:
+            self.status.set('Wait until the local AI and voice are ready, then start conversation.');return
+        if self.busy or self.listening:
+            self.status.set('Finish the current task or recording first.');return
+        self.preserve_draft()
+        self.conversation=True;self.speak_enabled.set(True)
+        self.conversation_button.configure(text='End conversation')
+        self.folder_button.configure(state='disabled');self.new_button.configure(state='disabled')
+        self.append('Conversation mode','Microphone on between replies. Speak naturally; a pause ends your turn and sends it automatically. End conversation returns to name activation if enabled; otherwise the microphone switches off. File changes still need approval.','system')
+        if initial_message:
+            self.composer.insert('1.0',initial_message);self.send()
+        elif acknowledge:
+            self.append('Kesara',"Yes, I'm listening.",'kesara')
+            self.speak("Yes, I'm listening.")
+        else:self.maybe_listen()
+
+    def end_conversation(self):
+        self.conversation=False;self.pending_voice_send=False
+        self.conversation_button.configure(text='Start conversation')
+        self.mic_stop.set();self.speaker.stop();self.speech_id+=1;self.speech_in_progress=False
+        self.expression('thinking' if self.busy else 'idle')
+        if not self.busy and not self.listening:
+            self.folder_button.configure(state='normal');self.new_button.configure(state='normal')
+        self.status.set('Conversation ended. Name activation remains on.' if self.hands_free else 'Conversation ended. Microphone off; any running task can be stopped with Stop.')
+
+    def maybe_listen(self):
+        if self.alive and self.conversation and not self.busy and not self.listening and not self.speech_in_progress and self.pending is None:
+            self.toggle_mic()
+
+    def stream_reply(self,text):
+        self.chat.configure(state='normal')
+        if not self.streaming_reply:
+            self.chat.insert('end','KESARA\n',('label','kesara'))
+            self.chat.mark_set('reply_start','end-1c')
+            self.chat.mark_gravity('reply_start','left')
+            self.streaming_reply=True
+        ranges=self.chat.tag_ranges('current_reply')
+        if ranges:self.chat.delete(ranges[0],ranges[-1])
+        self.chat.insert('reply_start',text,('kesara','current_reply'))
+        self.chat.configure(state='disabled');self.chat.see('end')
+
+    def finish_stream(self):
+        if not self.streaming_reply:return
+        self.chat.configure(state='normal')
+        ranges=self.chat.tag_ranges('current_reply')
+        self.chat.insert(ranges[-1] if ranges else 'reply_start','\n\n','kesara')
+        self.chat.tag_remove('current_reply','1.0','end')
+        self.chat.mark_unset('reply_start')
+        self.chat.configure(state='disabled');self.streaming_reply=False
+
+    def set_busy(self,value):
+        self.busy=value
+        state='disabled' if value else 'normal'
+        for button in (self.folder_button,self.new_button,self.mic_button): button.configure(state=state)
+        self.send_button.configure(text='Stop' if value else 'Send  →',state='normal')
+        if not self.voice_ready: self.mic_button.configure(state='disabled')
+        if self.conversation:
+            self.folder_button.configure(state='disabled');self.new_button.configure(state='disabled')
+        if value:self.expression('thinking')
+
+    def primary_action(self):
+        if self.busy:
+            if self.conversation:self.end_conversation()
+            self.stop(); self.send_button.configure(text='Stopping...',state='disabled')
+        else: self.send()
+
+    def send(self):
+        if self.busy or self.listening:
+            diagnostic('send_blocked',busy=self.busy,listening=self.listening)
+            return 'break'
+        text=self.composer.get('1.0','end').strip()
+        if not text: return 'break'
+        diagnostic('request_submitted',characters=len(text),conversation=self.conversation)
+        self.composer.delete('1.0','end')
+        self.append('You',text,'you')
+        if text.startswith('/remember '):
+            memory=json.loads(core.MEMORY.read_text(encoding='utf-8')) if core.MEMORY.exists() else []
+            memory.append(text[10:]); core.MEMORY.write_text(json.dumps(memory,indent=2),encoding='utf-8')
+            self.append('Kesara','Saved to memory.','kesara'); return 'break'
+        self.speaker.stop()
+        self.speech_id+=1;self.speech_in_progress=False
+        if self.speech_stream_queue is not None:self.speech_stream_queue.put(None)
+        self.speech_stream_queue=None;self.speech_stream_cursor=0
+        self.cancelled.clear()
+        self.set_busy(True)
+        cwd=self.cwd
+        def work():
+            try: core.run_turn(text,self.messages,cwd,self.emit,self.confirm,self.cancelled)
+            except Exception as exc: self.emit('error',str(exc))
+            finally: self.emit('done',None)
+        threading.Thread(target=work,daemon=True).start()
+        return 'break'
+
+    def confirm(self,description):
+        event=threading.Event()
+        decision={'allow':False}
+        self.emit('approval',(description,event,decision))
+        while not event.wait(0.15):
+            if self.cancelled.is_set() or not self.alive: return False
+        return decision['allow'] and not self.cancelled.is_set()
+
+    def approval(self,payload):
+        description,event,decision=payload
+        if self.cancelled.is_set(): event.set(); return
+        self.pending=(event,decision)
+        self.expression('approval')
+        window=tk.Toplevel(self.root)
+        self.approval_window=window
+        window.title('Kesara — Review action')
+        window.geometry('760x570')
+        window.configure(bg=BG)
+        window.transient(self.home.window if self.home else self.root)
+        tk.Label(window,text='Review before allowing',font=('Segoe UI',18,'bold'),bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(20,7))
+        tk.Label(window,text='This action uses your Windows account. Inspect the full file or command below.',bg=BG,fg=MUTED).pack(anchor='w',padx=20,pady=(0,12))
+        detail=scrolledtext.ScrolledText(window,bg=PANEL,fg=TEXT,wrap='word',font=('Consolas',10),relief='flat',padx=12,pady=12)
+        detail.pack(fill='both',expand=True,padx=20)
+        detail.insert('1.0',description); detail.configure(state='disabled')
+        def finish(allow):
+            decision['allow']=allow; event.set()
+            self.pending=None; self.approval_window=None
+            window.destroy()
+        bar=tk.Frame(window,bg=BG); bar.pack(fill='x',padx=20,pady=18)
+        self.button(bar,'Decline',lambda:finish(False)).pack(side='left')
+        self.button(bar,'Allow this action',lambda:finish(True),accent=True).pack(side='right')
+        window.protocol('WM_DELETE_WINDOW',lambda:finish(False))
+        window.grab_set()
+        self.status.set('Waiting for your approval')
+
+    def stop(self):
+        self.speech_id+=1;self.speech_in_progress=False
+        if self.speech_stream_queue is not None:self.speech_stream_queue.put(None)
+        self.speech_stream_queue=None;self.speech_stream_cursor=0
+        self.cancelled.set()
+        self.speaker.stop()
+        if self.pending:
+            event,decision=self.pending; decision['allow']=False; event.set(); self.pending=None
+        if self.approval_window:
+            self.approval_window.destroy(); self.approval_window=None
+        if self.busy: self.status.set('Stopping after the current model request or running command finishes...')
+
+    def choose_folder(self):
+        if self.busy or self.listening: return
+        selected=filedialog.askdirectory(initialdir=str(self.cwd),title='Choose Kesara project folder')
+        if selected:
+            self.cwd=Path(selected).resolve(); self.folder_text.set(str(self.cwd)); self.messages=[]
+            self.append('Workspace','Working in '+str(self.cwd),'system')
+
+    def new_chat(self):
+        if self.busy or self.listening: return
+        self.messages=[]
+        self.chat.configure(state='normal'); self.chat.delete('1.0','end'); self.chat.configure(state='disabled')
+        self.append('Kesara','New conversation. Your saved memory is still available.','kesara')
+
+    def memory(self):
+        window=tk.Toplevel(self.root); window.title('Kesara — Saved memory'); window.geometry('650x440'); window.configure(bg=BG)
+        tk.Label(window,text='Saved memory',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=18,pady=(18,6))
+        tk.Label(window,text='One preference per line. Edit or remove anything you no longer want saved.',bg=BG,fg=MUTED).pack(anchor='w',padx=18,pady=(0,12))
+        editor=scrolledtext.ScrolledText(window,bg=PANEL,fg=TEXT,insertbackground=TEXT,wrap='word',padx=10,pady=10)
+        editor.pack(fill='both',expand=True,padx=18)
+        values=json.loads(core.MEMORY.read_text(encoding='utf-8')) if core.MEMORY.exists() else []
+        editor.insert('1.0','\n'.join(values))
+        def save():
+            values=[line.strip() for line in editor.get('1.0','end').splitlines() if line.strip()]
+            core.MEMORY.write_text(json.dumps(values,indent=2),encoding='utf-8')
+            window.destroy(); self.status.set('Memory saved locally')
+        self.button(window,'Save memory',save,accent=True).pack(anchor='e',padx=18,pady=15)
+
+    def export(self):
+        target=filedialog.asksaveasfilename(title='Export conversation',defaultextension='.txt',filetypes=[('Text file','*.txt')])
+        if target: Path(target).write_text(self.chat.get('1.0','end'),encoding='utf-8')
+
+    def settings(self):
+        window=tk.Toplevel(self.root); window.title('Kesara — Settings'); window.geometry('440x350'); window.configure(bg=BG)
+        tk.Label(window,text='Settings',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,12))
+        tk.Checkbutton(window,text='Speak replies aloud',variable=self.speak_enabled,bg=BG,fg=TEXT,selectcolor=CARD,activebackground=BG,activeforeground=TEXT,command=self.speech_toggle).pack(anchor='w',padx=20,pady=(0,15))
+        def open_panel(command): window.destroy(); command()
+        self.button(window,'Choose microphone',lambda:open_panel(self.voice_settings)).pack(fill='x',padx=20,pady=5)
+        self.button(window,'Saved memory',lambda:open_panel(self.memory)).pack(fill='x',padx=20,pady=5)
+        self.button(window,'Export conversation',lambda:open_panel(self.export)).pack(fill='x',padx=20,pady=5)
+        tk.Label(window,text='Talk interrupts a spoken reply.\nSend changes to Stop while a task is running.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
+
+    def voice_settings(self):
+        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('590x500'); window.configure(bg=BG)
+        tk.Label(window,text='Offline voice',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,10))
+        tk.Label(window,text='English voice · Windows default speaking voice\nTalk starts a conversation.\nMore offers optional name activation and camera gestures.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,15))
+        try: devices=microphones()
+        except Exception as exc: messagebox.showerror('Microphone unavailable',str(exc),parent=window); devices=[]
+        labels=['Windows default microphone']+[f'{i}: {name}' for i,name in devices]
+        choice=ttk.Combobox(window,values=labels,state='readonly',width=70)
+        choice.current(0 if self.device is None else next((n+1 for n,(i,_) in enumerate(devices) if i==self.device),0))
+        choice.pack(padx=20,fill='x')
+        tk.Label(window,text='Names and technical words (comma-separated)',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(18,5))
+        names=tk.Entry(window,bg=CARD,fg=TEXT,insertbackground=TEXT,relief='flat')
+        names.pack(padx=20,fill='x',ipady=6)
+        names.insert(0,', '.join(recognition_names()))
+        tk.Label(window,text='Recognition hints only. They do not rename you or change your message.',bg=BG,fg=MUTED,font=('Segoe UI',9)).pack(anchor='w',padx=20,pady=(5,0))
+        tk.Label(window,text='Recognition speed',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(12,4))
+        speed=ttk.Combobox(window,values=['Balanced (faster)','Accurate (slower)'],state='readonly',width=30)
+        try:voice_options=json.loads(VOICE_SETTINGS.read_text(encoding='utf-8'))
+        except (OSError,ValueError):voice_options={}
+        speed.current(1 if voice_options.get('recognition_mode')=='accurate' else 0);speed.pack(anchor='w',padx=20)
+        def save():
+            n=choice.current(); self.device=None if n==0 else devices[n-1][0]
+            values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
+            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced')
+            VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
+            window.destroy(); self.status.set('Microphone and recognition hints saved')
+        self.button(window,'Save voice settings',save,accent=True).pack(anchor='e',padx=20,pady=20)
+
+    def toggle_mic(self):
+        if self.busy or not self.voice_ready: return
+        if self.listening:
+            self.mic_stop.set(); self.mic_button.configure(state='disabled'); self.status.set('Finishing dictation...'); return
+        self.ambient.configure(None)
+        self.speaker.stop(); self.listening=True; self.mic_stop.clear()
+        self.speech_id+=1;self.speech_in_progress=False
+        self.expression('listening')
+        self.recording_seconds=0
+        self.mic_button.configure(text='■  Done')
+        self.send_button.configure(state='disabled'); self.new_button.configure(state='disabled'); self.folder_button.configure(state='disabled')
+        self.status.set('Opening microphone...')
+        device=self.device
+        automatic=self.conversation
+        def work():
+            try: record(self.mic_stop,self.emit,device,auto_end=automatic)
+            except Exception as exc:
+                diagnostic('recording_error',error=str(exc))
+                self.emit('voice_error',str(exc))
+            finally: self.emit('mic_done',None)
+        threading.Thread(target=work,daemon=True).start()
+
+    def speech_toggle(self):
+        if not self.speak_enabled.get():
+            self.speaker.stop();self.speech_id+=1;self.speech_in_progress=False
+            self.root.after(500,self.maybe_listen)
+
+    def stream_speech(self,text,final=False):
+        if not self.conversation or not self.speak_enabled.get():return False
+        safe=text.split('```')[0][:700]
+        if final:
+            if self.speech_stream_queue is None:return False
+            remainder=safe[self.speech_stream_cursor:].strip()
+            if remainder:self.speech_stream_queue.put(remainder)
+            self.speech_stream_queue.put(None);self.speech_stream_queue=None
+            return True
+        ends=[match.end() for match in re.finditer(r'[.!?]\s+',safe)]
+        if not ends:return False
+        end=ends[-1]
+        segment=safe[self.speech_stream_cursor:end].strip()
+        if len(segment)<24:return False
+        if self.speech_stream_queue is None:
+            speech_queue=queue.Queue();self.speech_stream_queue=speech_queue
+            self.speech_id+=1;identifier=self.speech_id
+            self.speech_in_progress=True;self.expression('speaking')
+            def work():
+                try:
+                    while self.alive and identifier==self.speech_id:
+                        try:part=speech_queue.get(timeout=.2)
+                        except queue.Empty:continue
+                        if part is None:break
+                        if identifier!=self.speech_id:break
+                        self.speaker.speak(part)
+                except Exception as exc:self.emit('voice_error',str(exc))
+                finally:self.emit('speech_done',identifier)
+            threading.Thread(target=work,daemon=True).start()
+        self.speech_stream_queue.put(segment);self.speech_stream_cursor=end
+        return True
+
+    def speak(self,text):
+        # Read short prose only. Keep generated code and long output on screen.
+        spoken=text.split('```')[0].strip()[:700]
+        if not spoken: return
+        self.speech_id+=1;identifier=self.speech_id
+        self.speech_in_progress=True;self.expression('speaking')
+        def work():
+            try: self.speaker.speak(spoken)
+            except Exception as exc: self.emit('voice_error',str(exc))
+            finally:self.emit('speech_done',identifier)
+        threading.Thread(target=work,daemon=True).start()
+
+    def poll(self):
+        try:
+            while True:
+                kind,value=self.events.get_nowait()
+                if kind=='viseme':
+                    self.viseme=value if self.speech_in_progress else 0
+                    if hasattr(self.avatar,'viseme'):self.avatar.viseme=self.viseme
+                elif kind=='standby_phase':
+                    if value!='Say Kesara' or not self.standby_phase.startswith('Name missed'):self.standby_phase=value
+                elif kind=='standby_heard':self.last_standby_heard=value
+                elif kind=='ambient_wake':
+                    if self.hands_free:self.wake_up(value)
+                elif kind=='ambient_quiet':
+                    if self.hands_free:self.quiet()
+                elif kind=='ambient_error':
+                    self.hands_free=False
+                    self.append('Wake listening unavailable',value,'system')
+                    self.status.set('Wake listening stopped. Open workspace for details.')
+                elif kind=='camera_gesture':
+                    if self.camera_enabled:
+                        if value=='quiet':self.quiet()
+                        else:self.wake_up()
+                elif kind=='camera_state':
+                    self.camera_active=value=='on'
+                elif kind=='camera_error':
+                    self.camera_enabled=False
+                    self.append('Camera unavailable',value,'system')
+                    self.status.set('Camera stopped. Open workspace for details.')
+                elif kind=='status':
+                    self.status.set(value)
+                    if value.startswith('Thinking'):self.expression('thinking')
+                    elif value.startswith('Listening'):self.expression('listening')
+                elif kind=='assistant': self.append('Kesara',value,'kesara')
+                elif kind=='answer':
+                    if self.streaming_reply:self.stream_reply(value);self.finish_stream()
+                    else:self.append('Kesara',value,'kesara')
+                    self.status.set('Ready')
+                    if self.speak_enabled.get():
+                        if not self.stream_speech(value,final=True):self.speak(value)
+                    else:self.expression('idle')
+                elif kind=='answer_partial':
+                    self.stream_reply(value);self.status.set('Replying...')
+                    self.stream_speech(value)
+                elif kind=='tool': self.append('Tool result',value,'tool')
+                elif kind=='approval': self.approval(value)
+                elif kind=='error':
+                    if self.conversation:self.end_conversation()
+                    self.expression('error')
+                    self.append('Could not complete request',value,'system'); self.status.set('Request failed. You can try again.')
+                elif kind=='done':
+                    if self.speech_stream_queue is not None:
+                        self.speech_stream_queue.put(None);self.speech_stream_queue=None
+                    self.finish_stream()
+                    self.set_busy(False)
+                    if len(self.messages)>24: self.messages=self.messages[-24:]
+                    if not self.speech_in_progress:self.expression('idle')
+                    self.root.after(500,self.maybe_listen)
+                elif kind=='partial': self.status.set(f'Listening · {self.recording_seconds:.0f}s — '+('Heard: '+value[-100:] if value.strip() else 'speak a full sentence, then Done'))
+                elif kind=='recording_seconds':
+                    self.recording_seconds=value
+                    self.status.set(f'Listening · {value:.0f}s — speak, then click Done')
+                elif kind=='processing_voice':
+                    self.expression('thinking')
+                    self.status.set('Transcribing locally with Whisper. This can take a few seconds...')
+                    self.mic_button.configure(text='Transcribing...',state='disabled')
+                elif kind=='no_speech':
+                    if not self.conversation:self.append('Microphone check',value,'system')
+                    self.status.set('Listening again shortly...' if self.conversation else value)
+                elif kind=='level':
+                    self.level.configure(value=value);self.avatar.set_level(value)
+                    if self.companion and self.companion.winfo_exists():self.companion.set_level(value)
+                elif kind=='voice_ready':
+                    self.voice_ready=True
+                    self.mic_button.configure(text='●  Talk',state='disabled' if self.busy else 'normal')
+                    if not self.busy: self.status.set('Ready. Click Talk, wait for Listening, then speak.' if self.model_ready else 'Preparing the local AI. You can type while it loads.')
+                elif kind=='model_ready':
+                    self.model_ready=True
+                    self.model_state.set('Qwen2.5-Coder · 3B\nReady · CPU mode')
+                    if not self.busy and not self.listening:self.status.set('Ready. Local AI is loaded.')
+                elif kind=='model_warm_error':
+                    self.model_state.set('Qwen2.5-Coder · 3B\nLoads on first request')
+                elif kind=='voice_unavailable': self.mic_button.configure(text='Voice unavailable',state='disabled')
+                elif kind=='dictation':
+                    diagnostic('transcript_received',characters=len(value or ''),conversation=self.conversation)
+                    if value:
+                        if self.conversation and voice_command(value)=='quiet':
+                            self.quiet();continue
+                        if self.conversation and value.strip().lower().rstrip('.!?') in ('stop listening','end conversation','stop conversation'):
+                            self.hands_free=False;self.ambient.configure(None)
+                            self.end_conversation();continue
+                        existing=self.composer.get('1.0','end').strip()
+                        self.composer.insert('end',(' ' if existing else '')+value)
+                        if self.conversation:self.pending_voice_send=True
+                        else:self.status.set('Check your message, then Send.')
+                elif kind=='voice_error':
+                    if self.conversation:self.end_conversation()
+                    self.expression('error')
+                    self.append('Voice unavailable',value+'\nYou can continue by typing. Check Voice settings or Windows microphone permissions.','system')
+                    self.status.set('Voice issue — text chat remains available')
+                elif kind=='mic_done':
+                    diagnostic('voice_handoff',conversation=self.conversation,auto_send=self.pending_voice_send)
+                    self.listening=False; self.mic_button.configure(text='●  Talk',state='normal')
+                    self.level.configure(value=0)
+                    self.send_button.configure(state='normal'); self.new_button.configure(state='normal'); self.folder_button.configure(state='normal')
+                    self.expression('idle')
+                    if self.conversation:
+                        self.new_button.configure(state='disabled');self.folder_button.configure(state='disabled')
+                        if self.pending_voice_send:
+                            self.pending_voice_send=False;self.send()
+                        else:self.root.after(500,self.maybe_listen)
+                elif kind=='speech_done':
+                    if value==self.speech_id:
+                        self.speech_in_progress=False;self.expression('thinking' if self.busy else 'idle')
+                        self.root.after(500,self.maybe_listen)
+        except queue.Empty: pass
+        if self.alive: self.root.after(60,self.poll)
+
+    def close(self):
+        self.ambient.close();self.camera.close()
+        self.alive=False;self.conversation=False; self.mic_stop.set(); self.stop();self.speaker.close(); self.root.destroy()
+
+def main():
+    from companion import CompanionHome
+    root=tk.Tk();root.withdraw()
+    app=App(root);app.home=CompanionHome(app)
+    if '--wake' in __import__('sys').argv:app.toggle_hands_free()
+    root.mainloop()
+
+if __name__=='__main__': main()
