@@ -9,6 +9,7 @@ import queue
 import subprocess
 import threading
 import time
+from speech_corrections import apply_corrections, parse_corrections
 
 BASE=Path(__file__).resolve().parent
 MODEL_PATH=BASE/'speech-model'/'whisper-small.en'
@@ -138,7 +139,8 @@ def transcribe_audio(data,rate):
         options['beam_size']=5;segments=list(load_model().transcribe(waveform,**options)[0])
     # Whisper can hallucinate plausible phrases during noise or silence.
     # Filter low-confidence segments before routing any words to the agent.
-    return filter_transcript_segments(segments)
+    transcript=filter_transcript_segments(segments)
+    return apply_corrections(transcript,parse_corrections(voice_options().get('speech_corrections','')))
 
 def filter_transcript_segments(segments):
     """Return only credible recognized speech; never manufacture text."""
@@ -164,7 +166,7 @@ def contains_real_speech(data,rate):
         sampling_rate=16000)
     return sum(segment['end']-segment['start'] for segment in timestamps)>=int(.4*16000)
 
-def speech_finished(data,rate,pause_seconds=1.2):
+def speech_finished(data,rate,pause_seconds=1.8):
     import numpy as np
     from faster_whisper.vad import get_speech_timestamps,VadOptions
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
@@ -209,7 +211,7 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
         emit('status','Listening — speak naturally, then pause.' if auto_end else 'Listening — speak, then click Done.')
         start=time.monotonic()
         last_endpoint_check=0
-        while not stop.is_set() and time.monotonic()-start<(15 if auto_end else 30):
+        while not stop.is_set() and time.monotonic()-start<30:
             try: block=audio.get(timeout=0.2)
             except queue.Empty: continue
             blocks+=1
@@ -227,7 +229,7 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
     started=time.monotonic()
     if seconds>=0.65 and contains_real_speech(b''.join(chunks),rate):
         text=transcribe_audio(b''.join(chunks),rate)
-    diagnostic('recording_finished',engine='whisper-small.en',blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
+    diagnostic('recording_finished',engine=chosen_speech_model(),blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
     if not text:
         if seconds<2:
             emit('no_speech',f'Only {seconds:.1f} seconds of audio captured. Click Talk, wait for Listening, speak a full sentence, then click Done.')
