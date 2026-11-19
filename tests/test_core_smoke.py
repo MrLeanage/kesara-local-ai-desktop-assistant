@@ -5,6 +5,8 @@ from pathlib import Path
 from history import ChatHistory
 from speech_corrections import parse_corrections, apply_corrections, format_corrections
 import kesara
+import model_router
+from copy_intent import request_paths
 import voice
 import parakeet_backend as parakeet
 from turn_detection import TurnDetector
@@ -40,6 +42,106 @@ class HistoryTests(unittest.TestCase):
             cid=store.create()
             store.add(cid,'you',' ')
             self.assertEqual(store.messages(cid),[])
+
+class MultiModelRoutingTests(unittest.TestCase):
+    def test_local_selected_without_network_or_consent(self):
+        config={**model_router.DEFAULT_SETTINGS,'models':model_router.DEFAULT_MODELS.copy()}
+        with patch.object(model_router,'configuration',return_value=config):
+            with patch.object(kesara,'request_ollama',return_value='local') as local:
+                with patch.object(model_router,'call_cloud') as cloud:
+                    self.assertEqual(kesara.request([{'role':'user','content':'hello'}]),'local')
+                    local.assert_called_once()
+                    cloud.assert_not_called()
+
+    def test_cloud_requires_consent_even_when_key_exists(self):
+        config={**model_router.DEFAULT_SETTINGS,'provider':'groq','cloud_consent':False}
+        with patch.object(model_router,'_openai_compatible') as network:
+            with self.assertRaisesRegex(model_router.ModelError,'disabled'):
+                model_router.call_cloud('groq','openai/gpt-oss-20b',[],config)
+            network.assert_not_called()
+
+    def test_openrouter_does_not_allow_paid_models(self):
+        config={**model_router.DEFAULT_SETTINGS,'cloud_consent':True}
+        with patch.object(model_router,'_openai_compatible') as network:
+            with self.assertRaisesRegex(model_router.ModelError,'free model'):
+                model_router.call_cloud('openrouter','openai/gpt-4o',[],config)
+            network.assert_not_called()
+
+    def test_cloud_output_must_be_valid_tool_action(self):
+        with self.assertRaises(model_router.ModelError):
+            model_router._decode_action('Sure, I made the file.')
+        with self.assertRaises(model_router.ModelError):
+            model_router._decode_action('{"action":"evil"}')
+        parsed=json.loads(model_router._decode_action('{"action":"answer","text":"done"}'))
+        self.assertEqual(parsed['action'],'answer')
+        self.assertEqual(parsed['path'],'')
+
+    def test_retryable_cloud_rate_limit_falls_back_local(self):
+        config={**model_router.DEFAULT_SETTINGS,'provider':'groq','cloud_consent':True,
+                'fallback':True,'models':model_router.DEFAULT_MODELS.copy()}
+        with patch.object(model_router,'configuration',return_value=config):
+            with patch.object(model_router,'call_cloud',side_effect=model_router.ModelError('Rate limit',True)):
+                with patch.object(kesara,'request_ollama',return_value='offline') as local:
+                    self.assertEqual(kesara.request([]),'offline')
+                    local.assert_called_once()
+
+    def test_auth_failure_does_not_fallback_or_lose_privacy_boundary(self):
+        config={**model_router.DEFAULT_SETTINGS,'provider':'gemini','cloud_consent':True,
+                'fallback':True,'models':model_router.DEFAULT_MODELS.copy()}
+        with patch.object(model_router,'configuration',return_value=config):
+            with patch.object(model_router,'call_cloud',side_effect=model_router.ModelError('Invalid API key')):
+                with patch.object(kesara,'request_ollama') as local:
+                    with self.assertRaises(model_router.ModelError):
+                        kesara.request([])
+                    local.assert_not_called()
+
+    def test_configuration_persisted_without_api_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(model_router,'SETTINGS',Path(temp)/'ai.json'):
+                conf={**model_router.DEFAULT_SETTINGS,'provider':'groq',
+                      'cloud_consent':True,'models':model_router.DEFAULT_MODELS.copy()}
+                model_router.save_configuration(conf)
+                self.assertEqual(model_router.configuration()['provider'],'groq')
+                self.assertNotIn('GROQ_API_KEY',(Path(temp)/'ai.json').read_text())
+                conf['models']['openrouter']='paid/model'
+                with self.assertRaises(ValueError):
+                    model_router.save_configuration(conf)
+
+class ReliableCopyTests(unittest.TestCase):
+    def test_directory_copy_uses_explicit_source_and_destination(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);src=root/'source';src.mkdir()
+            (src/'hello.txt').write_text('complete',encoding='utf-8')
+            dest=root/'target'
+            events=[]
+            import threading
+            prompt=f'Copy all content from "{src}" to "{dest}"'
+            with patch.object(kesara,'request',side_effect=AssertionError('Must use typed file tool')):
+                kesara.run_turn(prompt,[],root,lambda kind,value:events.append((kind,value)),
+                                lambda desc:True,threading.Event())
+            self.assertEqual((dest/'hello.txt').read_text(),'complete')
+            self.assertTrue(any(kind=='answer' and 'Copied directory' in value for kind,value in events))
+
+    def test_copy_refuses_unknown_relative_paths_and_existing_dest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); src=root/'one'; src.mkdir(); dst=root/'two';dst.mkdir()
+            message=kesara.execute({'action':'copy','path':'one','destination':'two'},root,
+                                   confirm=lambda desc:self.fail('Must reject relative paths'))
+            self.assertIn('absolute paths',message)
+            message=kesara.execute({'action':'copy','path':str(src),'destination':str(dst)},root,
+                                   confirm=lambda desc:self.fail('Must reject overwrites'))
+            self.assertIn('already exists',message)
+
+    def test_copy_outside_project_not_auto_approved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=root/'project';workspace.mkdir()
+            outside=root/'outside'
+            policy=ApprovalPolicy(root/'policy.json')
+            policy.set_mode(workspace,'always_write')
+            self.assertFalse(policy.allows(workspace,'COPY '+str(workspace)+' -> '+str(outside)))
+
+    def test_relative_copy_request_does_not_go_to_wrong_folder(self):
+        self.assertIsNone(request_paths('copy all content from kesara-v2-test to Kesara-2'))
 
 class ExplicitFolderRoutingTests(unittest.TestCase):
     def test_windows_path_before_command_is_parsed_without_guessing(self):
