@@ -8,6 +8,7 @@ import kesara
 import voice
 import parakeet_backend as parakeet
 from turn_detection import TurnDetector
+from voice_safety import requires_voice_review
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -230,6 +231,18 @@ class SyncedVoiceDisplayTests(unittest.TestCase):
         app.advance_voice_reply()
         self.assertEqual(app.voice_reply_visible,'He')
         app.stream_reply.assert_called_once_with('He')
+
+class SpokenCommandSafetyTests(unittest.TestCase):
+    def test_speech_file_operation_requires_review(self):
+        self.assertTrue(requires_voice_review('Create a folder called Kesara-2 inside this path.'))
+        self.assertTrue(requires_voice_review('D:\\AI works\\Kesara 2.0'))
+        self.assertTrue(requires_voice_review('Please delete the project folder'))
+        self.assertTrue(requires_voice_review('Run this PowerShell command'))
+
+    def test_casual_chat_does_not_require_review(self):
+        self.assertFalse(requires_voice_review('Hi Kesara'))
+        self.assertFalse(requires_voice_review('What are your coding capabilities?'))
+        self.assertFalse(requires_voice_review('Tell me about software architecture'))
 
 class HandsFreeTurnTests(unittest.TestCase):
     def test_detects_speech_start_and_natural_pause(self):
