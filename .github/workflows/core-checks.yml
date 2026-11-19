@@ -1,0 +1,18 @@
+name: Kesara core checks
+on:
+  push:
+    branches: [main, feature/kesara-core-history-agent]
+  pull_request:
+    branches: [main]
+jobs:
+  source-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate Python syntax
+        run: python -m compileall -q kesara.py desktop.py companion.py waveform.py history.py voice.py interaction.py
+      - name: Run dependency-free core tests
+        run: python -m unittest discover -s tests -v
