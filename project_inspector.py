@@ -53,21 +53,24 @@ def inspect_project(root):
     if not root.is_dir():
         raise FileNotFoundError('Project directory does not exist: '+str(root))
     files=[]
-    for path in root.rglob('*'):
-        try:
+    # Prune large/generated folders BEFORE traversing them.
+    for current,dirs,filenames in os.walk(root,followlinks=False):
+        relative_dir=Path(current).relative_to(root)
+        depth=len(relative_dir.parts) if relative_dir!=Path('.') else 0
+        dirs[:]=[name for name in dirs if name not in SKIP_DIRS
+                 and not (Path(current)/name).is_symlink() and depth<6]
+        for name in filenames:
+            if name in SKIP_FILES or name.startswith('.env'):
+                continue
+            path=Path(current)/name
             relative=path.relative_to(root)
-            if len(relative.parts)>7 or any(part in SKIP_DIRS for part in relative.parts):
+            if path.is_symlink():
                 continue
-            if path.is_symlink() or not path.is_file():
-                continue
-            if path.name in SKIP_FILES or path.name.startswith('.env'):
-                continue
-            if path.suffix.lower() not in CODE_SUFFIXES and path.name not in READ_PRIORITY:
+            if path.suffix.lower() not in CODE_SUFFIXES and name not in READ_PRIORITY:
                 continue
             files.append(relative)
             if len(files)>=250:break
-        except (OSError,ValueError):
-            continue
+        if len(files)>=250:break
     names={str(path).replace('\\','/') for path in files}
     ordered=[]
     for important in READ_PRIORITY:
