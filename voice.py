@@ -28,12 +28,51 @@ def audio_level(data):
     db=20*math.log10(max(rms,1)/32768)
     return max(0,min(100,int((db+60)*2))),rms
 
+MODEL_REPOSITORY='Systran/faster-whisper-small.en'
+REQUIRED_MODEL_FILES=('model.bin','config.json','tokenizer.json','vocabulary.txt')
+
+def missing_model_files():
+    """Return files that must exist before offline Whisper can load."""
+    return [name for name in REQUIRED_MODEL_FILES if not (MODEL_PATH/name).is_file()]
+
+def ensure_speech_model(on_status=None):
+    """Download missing free Whisper files once, without blocking Tk's UI thread.
+
+    Called from a startup worker. Existing complete installations are reused
+    without contacting the network. Failed downloads remain retryable on restart.
+    """
+    missing=missing_model_files()
+    if not missing:
+        return False
+    if on_status:
+        on_status('Downloading free offline Whisper speech model (first setup)...')
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            repo_id=MODEL_REPOSITORY,
+            local_dir=str(MODEL_PATH),
+            allow_patterns=list(REQUIRED_MODEL_FILES),
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            'Could not download offline Whisper model. Check internet access '
+            'and free disk space, then restart Kesara. Details: '+str(exc)
+        ) from exc
+    missing=missing_model_files()
+    if missing:
+        raise RuntimeError('Incomplete Whisper download; missing: '+', '.join(missing))
+    if on_status:
+        on_status('Offline Whisper model downloaded. Initializing recognition...')
+    return True
+
 def load_model():
     global _model
     with _lock:
         if _model is None:
             from faster_whisper import WhisperModel
-            if any(not (MODEL_PATH/name).is_file() for name in ('model.bin','config.json','tokenizer.json','vocabulary.txt')): raise RuntimeError('Offline Whisper model files are not ready.')
+            missing=missing_model_files()
+            if missing:
+                raise RuntimeError('Offline Whisper model files are not ready: '+', '.join(missing))
             _model=WhisperModel(str(MODEL_PATH),device='cpu',compute_type='int8',cpu_threads=2,num_workers=1,local_files_only=True)
     return _model
 
