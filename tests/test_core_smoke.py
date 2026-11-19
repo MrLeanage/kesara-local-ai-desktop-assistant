@@ -242,6 +242,16 @@ class ParakeetIntegrationTests(unittest.TestCase):
             self.assertTrue(parakeet.is_installed(destination))
             self.assertFalse((root/'outside.txt').exists())
 
+    def test_offline_inference_reads_recognizer_output(self):
+        fake_stream=SimpleNamespace(result=SimpleNamespace(text='Analyze my codebase'),
+                                    accept_waveform=Mock())
+        fake_recognizer=SimpleNamespace(create_stream=Mock(return_value=fake_stream),
+                                       decode_stream=Mock())
+        with patch.object(parakeet,'load_recognizer',return_value=fake_recognizer):
+            self.assertEqual(parakeet.transcribe('fake float32 array'),'Analyze my codebase')
+            fake_stream.accept_waveform.assert_called_once_with(16000,'fake float32 array')
+            fake_recognizer.decode_stream.assert_called_once_with(fake_stream)
+
     def test_parakeet_transcription_routes_to_selected_backend(self):
         class FakeWave:
             def astype(self,kind):
