@@ -66,6 +66,7 @@ class App:
         self.speaker.on_viseme=lambda value:self.emit('viseme',value)
         self.busy=False
         self.listening=False
+        self.user_speaking=False
         self.voice_ready=False
         self.recording_seconds=0
         try:self.device=preferred_microphone()
@@ -527,7 +528,7 @@ class App:
         if self.listening:
             self.mic_stop.set(); self.mic_button.configure(state='disabled'); self.status.set('Finishing dictation...'); return
         self.ambient.configure(None)
-        self.speaker.stop(); self.listening=True; self.mic_stop.clear()
+        self.speaker.stop(); self.listening=True; self.user_speaking=False; self.mic_stop.clear()
         self.speech_id+=1;self.speech_in_progress=False
         self.expression('listening')
         self.recording_seconds=0
@@ -703,11 +704,13 @@ class App:
                 elif kind=='partial': self.status.set(f'Listening · {self.recording_seconds:.0f}s — '+('Heard: '+value[-100:] if value.strip() else 'speak a full sentence, then Done'))
                 elif kind=='recording_seconds':
                     self.recording_seconds=value
-                    self.status.set(f'Listening · {value:.0f}s — speak, then pause.' if self.conversation else f'Listening · {value:.0f}s — speak, then click Done')
+                    self.status.set((f'Hearing you · {value:.0f}s — keep talking.' if self.user_speaking else f'Listening · {value:.0f}s — speak naturally.') if self.conversation else f'Listening · {value:.0f}s — speak, then click Done')
                 elif kind=='speech_started':
-                    self.expression('listening');self.status.set('I can hear you — keep talking.')
+                    self.user_speaking=True
+                    self.expression('listening');self.status.set('Hearing your speech — keep talking.')
                 elif kind=='speech_ended':
-                    self.status.set('You finished speaking — transcribing...')
+                    self.user_speaking=False
+                    self.status.set('Speech ended — transcribing...')
                 elif kind=='processing_voice':
                     self.expression('thinking')
                     self.status.set('Transcribing your speech locally...')
@@ -773,7 +776,7 @@ class App:
                     self.status.set('Voice issue — text chat remains available')
                 elif kind=='mic_done':
                     diagnostic('voice_handoff',conversation=self.conversation,auto_send=self.pending_voice_send)
-                    self.listening=False; self.mic_button.configure(text='●  Talk',state='normal')
+                    self.listening=False; self.user_speaking=False; self.mic_button.configure(text='●  Talk',state='normal')
                     self.level.configure(value=0)
                     self.send_button.configure(state='normal'); self.new_button.configure(state='normal'); self.folder_button.configure(state='normal')
                     self.expression('idle')
