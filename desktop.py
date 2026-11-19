@@ -534,7 +534,7 @@ class App:
     def model_description():
         config=model_router.configuration()
         name,model=model_router.chosen_model(config)
-        return name.capitalize()+' · '+model+'\\n'+('Cloud opt-in' if name!='ollama' else 'Local inference')
+        return name.capitalize()+' · '+model+'\n'+('Cloud opt-in' if name!='ollama' else 'Local inference')
 
     def ai_engine_settings(self):
         if self.busy:
@@ -567,8 +567,8 @@ class App:
         secondary=ttk.Combobox(window,values=options,state='readonly',width=35)
         secondary.set(config.get('fallback_provider','ollama'))
         secondary.pack(anchor='w',padx=20,pady=(0,8))
-        tk.Label(window,text='API keys are read from GEMINI_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY in Windows.\\n'
-                 'OpenRouter: only :free models or openrouter/free. No automatic paid-model selection.\\n'
+        tk.Label(window,text='API keys are read from GEMINI_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY in Windows.\n'
+                 'OpenRouter: only :free models or openrouter/free. No automatic paid-model selection.\n'
                  'Other providers may bill depending on your account; check free-tier eligibility before enabling.',
                  bg=BG,fg=MUTED,wraplength=660,justify='left').pack(anchor='w',padx=20,pady=(0,12))
         def save():
