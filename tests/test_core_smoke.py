@@ -130,7 +130,7 @@ class SelectedProjectTests(unittest.TestCase):
                                 lambda kind,value: events.append((kind,value)),
                                 lambda desc:False,threading.Event())
             self.assertTrue(any('pom.xml' in str(value) for kind,value in events if kind=='tool'))
-            self.assertIn(str(folder),str(outgoing[0]))
+            self.assertTrue(any(str(folder) in message['content'] for message in outgoing[0]))
             self.assertTrue(any(kind=='answer' for kind,_ in events))
 
 
