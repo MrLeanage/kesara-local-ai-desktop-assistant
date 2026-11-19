@@ -43,6 +43,7 @@ class App:
         self.speech_in_progress=False
         self.voice_reply_full=None
         self.voice_reply_visible=''
+        self.voice_reply_target=''
         self.voice_reply_tick_active=False
         self.voice_playback_started=False
         self.speech_id=0
@@ -366,7 +367,7 @@ class App:
             memory.append(text[10:]); core.MEMORY.write_text(json.dumps(memory,indent=2),encoding='utf-8')
             self.append('Kesara','Saved to memory.','kesara'); return 'break'
         self.speaker.stop()
-        self.voice_reply_full=None;self.voice_reply_visible='';self.voice_playback_started=False
+        self.voice_reply_full=None;self.voice_reply_visible='';self.voice_reply_target='';self.voice_playback_started=False
         self.speech_id+=1;self.speech_in_progress=False
         if self.speech_stream_queue is not None:self.speech_stream_queue.put(None)
         self.speech_stream_queue=None;self.speech_stream_cursor=0
@@ -610,13 +611,13 @@ class App:
 
     def advance_voice_reply(self):
         """Reveal spoken text at conversational pace; flush on speech completion."""
-        if self.voice_reply_full is None or not self.speech_in_progress:
+        if not self.speech_in_progress or not self.conversation:
             self.voice_reply_tick_active=False
             return
         if not self.voice_playback_started:
             self.root.after(60,self.advance_voice_reply)
             return
-        target=self.spoken_prose(self.voice_reply_full)
+        target=self.voice_reply_target
         if len(self.voice_reply_visible)<len(target):
             self.voice_reply_visible=target[:min(len(target),len(self.voice_reply_visible)+2)]
             self.stream_reply(self.voice_reply_visible)
@@ -632,7 +633,7 @@ class App:
             while True:
                 kind,value=self.events.get_nowait()
                 if kind=='viseme':
-                    if self.speech_in_progress and value and self.conversation and self.voice_reply_full is not None:
+                    if self.speech_in_progress and value and self.conversation:
                         self.voice_playback_started=True
                         self.ensure_voice_reply_tick()
                     self.viseme=value if self.speech_in_progress else 0
@@ -791,14 +792,15 @@ class App:
                     # Speech worker may emit before the final answer arrives.
                     # Display begins when the synthesizer produces real visemes.
                     identifier,part=value
-                    if identifier==self.speech_id and self.voice_reply_full is not None:
+                    if identifier==self.speech_id and self.conversation:
+                        self.voice_reply_target+=(' ' if self.voice_reply_target else '')+part
                         self.ensure_voice_reply_tick()
                 elif kind=='speech_done':
                     if value==self.speech_id:
                         if self.conversation and self.voice_reply_full is not None:
                             self.stream_reply(self.voice_reply_full)
                             self.finish_stream()
-                            self.voice_reply_full=None;self.voice_reply_visible='';self.voice_playback_started=False
+                            self.voice_reply_full=None;self.voice_reply_visible='';self.voice_reply_target='';self.voice_playback_started=False
                         self.speech_in_progress=False;self.expression('thinking' if self.busy else 'idle')
                         self.root.after(500,self.maybe_listen)
         except queue.Empty: pass
