@@ -474,7 +474,7 @@ class App:
         speed=ttk.Combobox(window,values=['Balanced (faster)','Accurate (slower)'],state='readonly',width=30)
         try:voice_options=json.loads(VOICE_SETTINGS.read_text(encoding='utf-8'))
         except (OSError,ValueError):voice_options={}
-        speed.current(1 if voice_options.get('recognition_mode')=='accurate' else 0);speed.pack(anchor='w',padx=20)
+        speed.current(0 if voice_options.get('recognition_mode')=='balanced' else 1);speed.pack(anchor='w',padx=20)
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
