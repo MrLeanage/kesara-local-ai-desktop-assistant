@@ -5,7 +5,8 @@ from pathlib import Path
 from history import ChatHistory
 import kesara
 import voice
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 class HistoryTests(unittest.TestCase):
     def test_persistent_conversations_and_project_association(self):
@@ -61,7 +62,8 @@ class SpeechBootstrapTests(unittest.TestCase):
             for name in voice.REQUIRED_MODEL_FILES:
                 (folder/name).write_bytes(b'dummy')
             with patch.object(voice,'MODEL_PATH',folder):
-                with patch('huggingface_hub.snapshot_download') as download:
+                download=Mock()
+                with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=download)}):
                     self.assertFalse(voice.ensure_speech_model())
                     download.assert_not_called()
 
@@ -74,7 +76,8 @@ class SpeechBootstrapTests(unittest.TestCase):
                 for name in voice.REQUIRED_MODEL_FILES:
                     (folder/name).write_bytes(b'dummy')
             with patch.object(voice,'MODEL_PATH',folder):
-                with patch('huggingface_hub.snapshot_download',side_effect=fake_download) as download:
+                download=Mock(side_effect=fake_download)
+                with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=download)}):
                     self.assertTrue(voice.ensure_speech_model(events.append))
                     self.assertFalse(voice.ensure_speech_model(events.append))
                     self.assertEqual(download.call_count,1)
@@ -83,7 +86,7 @@ class SpeechBootstrapTests(unittest.TestCase):
     def test_failed_download_reports_error(self):
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(voice,'MODEL_PATH',Path(temp)):
-                with patch('huggingface_hub.snapshot_download',side_effect=OSError('offline')):
+                with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=Mock(side_effect=OSError('offline')))}):
                     with self.assertRaisesRegex(RuntimeError,'Could not download'):
                         voice.ensure_speech_model()
 
