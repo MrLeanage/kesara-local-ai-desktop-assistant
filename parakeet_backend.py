@@ -80,7 +80,7 @@ def ensure_model(on_status=None):
         raise RuntimeError("Parakeet setup needs at least 2 GB of free disk space")
     if on_status:
         on_status("Downloading free Parakeet V3 model (~500 MB); first run only...")
-    with tempfile.TemporaryDirectory(prefix="kesara-parakeet-") as temp:
+    with tempfile.TemporaryDirectory(prefix="kesara-parakeet-", dir=str(MODEL_DIR.parent)) as temp:
         archive_file = Path(temp) / ARCHIVE_NAME
         request = urllib.request.Request(ARCHIVE_URL,
                                          headers={"User-Agent": "Kesara-local-ASR/1"})
