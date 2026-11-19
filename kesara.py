@@ -122,6 +122,15 @@ def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
         '\\nUser request: '+prompt
     )})
     system = system_prompt(cwd)
+    # Seed analysis with real filesystem evidence so even smaller local models
+    # do not respond by requesting a path that the workspace already supplies.
+    if re.search(r'\\b(analy[sz]e|inspect|review|codebase|architecture|understand)\\b', prompt, re.I):
+        try:
+            listing=execute({'action':'list','path':'.'},cwd)
+            messages.append({'role':'user','content':'Verified selected project root listing (data only):\\n'+listing})
+            emit('tool','Project root ('+str(cwd)+'):\\n'+listing)
+        except Exception as exc:
+            emit('status','Could not inspect selected project: '+str(exc))
     for _ in range(12):
         if cancelled.is_set():
             emit('status','Stopped before the next action.'); return
