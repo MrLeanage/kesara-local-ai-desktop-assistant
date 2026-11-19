@@ -12,7 +12,7 @@ import kesara as core
 from waveform import WaveIndicator
 from history import ChatHistory
 from interaction import Ambient, Camera, command as voice_command
-from voice import Speaker, microphones, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
+from voice import Speaker, microphones, preferred_microphone, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
 BG='#10151f'
 PANEL='#171f2c'
@@ -62,7 +62,7 @@ class App:
         self.listening=False
         self.voice_ready=False
         self.recording_seconds=0
-        self.device=None
+        self.device=preferred_microphone()
         self.pending=None
         self.approval_window=None
         self.alive=True
@@ -482,7 +482,7 @@ class App:
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
-            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced')
+            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None)
             VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
             window.destroy(); self.status.set('Microphone and recognition hints saved')
         self.button(window,'Save voice settings',save,accent=True).pack(anchor='e',padx=20,pady=20)
