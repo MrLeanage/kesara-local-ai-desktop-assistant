@@ -62,6 +62,7 @@ class FloatingVoiceTests(unittest.TestCase):
         app.conversation=False
         app.voice_ready=True
         app.model_ready=False  # Ollama may warm on its first real request.
+        app.cwd=Path.cwd()
         app.busy=False
         app.listening=False
         app.preserve_draft=Mock()
