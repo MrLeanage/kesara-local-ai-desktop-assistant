@@ -133,5 +133,19 @@ class SelectedProjectTests(unittest.TestCase):
             self.assertIn(str(folder),str(outgoing[0]))
             self.assertTrue(any(kind=='answer' for kind,_ in events))
 
+
+class FalseSpeechTests(unittest.TestCase):
+    def test_silence_hallucination_is_discarded(self):
+        fake=SimpleNamespace(text='Boot files.',avg_logprob=-1.5,no_speech_prob=.91)
+        self.assertEqual(voice.filter_transcript_segments([fake]),'')
+
+    def test_clear_speech_is_kept(self):
+        fake=SimpleNamespace(text=' Analyze the selected project. ',avg_logprob=-.2,no_speech_prob=.04)
+        self.assertEqual(voice.filter_transcript_segments([fake]),'Analyze the selected project.')
+
+    def test_weak_segment_is_discarded(self):
+        fake=SimpleNamespace(text='Thank you for watching.',avg_logprob=-1.1,no_speech_prob=.1)
+        self.assertEqual(voice.filter_transcript_segments([fake]),'')
+
 if __name__=='__main__':
     unittest.main()
