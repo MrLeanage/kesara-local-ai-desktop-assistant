@@ -92,10 +92,10 @@ def transcribe_audio(data,rate):
     if rate!=16000:
         waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,np.arange(len(waveform)),waveform).astype(np.float32)
     names=recognition_names()
-    prompt='Names and vocabulary: '+', '.join(names)+'.' if names else None
+    prompt='Technical software engineering conversation. Project, source code, architecture, Python, Java, Spring Boot, Flutter, Windows file paths. Names and vocabulary: '+', '.join(names)+'.'
     try: settings=json.loads(SETTINGS.read_text(encoding='utf-8'))
     except (OSError,ValueError):settings={}
-    beam=5 if settings.get('recognition_mode')=='accurate' else 2
+    beam=2 if settings.get('recognition_mode')=='balanced' else 5
     options=dict(language='en',beam_size=beam,temperature=0,condition_on_previous_text=False,vad_filter=True,vad_parameters={'threshold':0.35,'min_silence_duration_ms':500},initial_prompt=prompt,hallucination_silence_threshold=2)
     segments,_=load_model().transcribe(waveform,**options)
     segments=list(segments)
