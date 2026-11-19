@@ -57,15 +57,17 @@ def request(messages,on_partial=None):
     for retryable provider outages, never for invalid responses or auth errors.
     """
     config=model_router.configuration()
-    provider,selected_model=model_router.chosen_model(config)
-    if provider=='ollama':
-        return request_ollama(messages,on_partial,selected_model)
-    try:
-        return model_router.call_cloud(provider,selected_model,messages,config)
-    except model_router.ModelError as exc:
-        if not (config['fallback'] and exc.retryable):
-            raise
-        return request_ollama(messages,on_partial,config['models']['ollama'])
+    candidates=model_router.cloud_candidates(config)
+    for index,provider in enumerate(candidates):
+        model=config['models'][provider]
+        try:
+            if provider=='ollama':
+                return request_ollama(messages,on_partial,model)
+            return model_router.call_cloud(provider,model,messages,config)
+        except model_router.ModelError as exc:
+            if not exc.retryable or index==len(candidates)-1:
+                raise
+    raise model_router.ModelError('No configured inference provider available')
 
 def warm_model(cwd):
     # Cloud providers require explicit consent and are not warmed at startup.
