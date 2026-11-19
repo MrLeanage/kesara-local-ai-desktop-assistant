@@ -115,3 +115,35 @@ Outcome: better inference/provider flexibility, project memory and optional issu
 7. Reduce repeated approvals using fine-grained capability-scoped policies rather than unrestricted PowerShell authorizations.
 
 **Acceptance gate:** verify correct explicit Windows destination with spaces, verify the active project reading a file outside `projects/`, verify no changes occur after declined approval. CI mocks cannot prove end-to-end Windows shell/audio behavior.
+
+## 2026-11-19 architecture implementation increment — Python desktop retained
+
+Decisions represented in this increment: keep existing Python/Tkinter UI and
+voice; use free/local Ollama by default, with opt-in cloud providers; separate
+model reasoning from native coding tools; preserve project-scoped approvals;
+advance to plan → implement → test → review on a bounded, evidence-based path.
+**Flutter desktop migration is intentionally deferred** for Kesara to help
+with later, not undertaken in this increment.
+
+Implemented now:
+- `coding_tools.py`: bounded source scan with excluded generated directories,
+  `project_map` (project manifest hints, entry points, Git status), targeted
+  `search_code`, and allowlisted test-runner detection with explicit approval.
+- New model action kinds `project_map`, `search`, and `test`; retain existing
+  deterministic copy/mkdir and approval-controlled write/shell operations.
+- Direct chat commands `/map`, `/search <symbol>`, and `/test` do not require
+  model tool selection, making these usable with Qwen2.5-Coder 3B.
+- Activity logs now record action type and success metadata, never the entire
+  generated file contents, command, or tool output.
+- Regression coverage includes constrained search, project mapping, test
+  approvals, pass/fail evidence and model-independent direct commands.
+
+Not yet delivered: full planning agent, multi-agent orchestration, AST-aware
+patching, disposable Git worktrees, code review/rollback engine, Jira-driven
+ticket-to-PR, self-modification, or Flutter migration. MCP is not necessary
+for local filesystem/search/test tools; it may later be an adapter for Jira,
+GitHub and other external services, always behind authorization.
+
+Acceptance: on Windows, select a real repo; run `/map`, `/search <symbol>`,
+and `/test`; inspect source mappings and real test output. GitHub CI covers
+mocked test subprocesses but not full Windows integration.
