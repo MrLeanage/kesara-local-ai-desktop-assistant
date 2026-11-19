@@ -185,6 +185,23 @@ def system_prompt(cwd):
         'Working directory: '+str(cwd)+'\nSaved preferences: '+json.dumps(memory))
 
 def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
+    # Direct commands use native tools without relying on the small model to
+    # emit the correct JSON action. Each tool remains inside the selected root.
+    instruction=prompt.strip()
+    if instruction in ('/map','/project-map'):
+        result=execute({'action':'project_map'},cwd,confirm=confirm)
+        emit('tool',result);emit('answer',result)
+        return
+    if instruction.startswith('/search '):
+        term=instruction[8:].strip()
+        try:result=execute({'action':'search','text':term},cwd,confirm=confirm)
+        except ValueError as exc:result='Search rejected: '+str(exc)
+        emit('tool',result);emit('answer',result)
+        return
+    if instruction=='/test':
+        result=execute({'action':'test'},cwd,confirm=confirm)
+        emit('tool',result);emit('answer',result)
+        return
     # Explicit path creation is deterministic. Never let the language model
     # silently redirect a user-specified destination to the selected workspace.
     target=target_for_request(prompt)
