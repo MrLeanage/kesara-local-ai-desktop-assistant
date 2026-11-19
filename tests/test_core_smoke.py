@@ -14,7 +14,7 @@ from turn_detection import TurnDetector
 from voice_safety import requires_voice_review
 from approval_policy import ApprovalPolicy
 from folder_intent import explicit_mkdir_request, target_for_request
-from project_inspector import explicitly_requested_project, inspect_project
+from project_inspector import explicitly_requested_project, inspect_project, structured_report
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -378,6 +378,25 @@ class RepositoryInspectionTests(unittest.TestCase):
             self.assertTrue(any('README.md' in str(value) for kind,value in events if kind=='tool'))
             self.assertTrue(any('DesktopApp' in m['content'] for m in outgoing[0] if m['role']=='user'))
             self.assertTrue(any('Python desktop' in value for kind,value in events if kind=='answer'))
+
+    def test_fallback_explains_actual_modules_not_just_filenames(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/'README.md').write_text('# Kesara\\nKesara is a voice-enabled coding desktop assistant.',encoding='utf-8')
+            (root/'kesara.py').write_text('"""Agent core controls actions and tools."""\\nimport os\\ndef run_turn(): pass',encoding='utf-8')
+            (root/'desktop.py').write_text('"""Desktop chat interface."""\\nimport tkinter\\nclass App: pass',encoding='utf-8')
+            (root/'assets').mkdir()
+            (root/'assets'/'three').mkdir()
+            (root/'assets'/'three'/'vendor').mkdir()
+            for n in range(260):
+                (root/'assets'/'three'/'vendor'/f'generated{n}.js').write_text('var unused = 1;')
+            snapshot=inspect_project(root)
+            report=structured_report(snapshot)
+            self.assertIn('Agent core controls actions and tools',report)
+            self.assertIn('Desktop chat interface',report)
+            self.assertIn('ARCHITECTURE AND EXECUTION',report)
+            self.assertIn('Tkinter desktop interface',report)
+            self.assertNotIn('generated0.js',str(snapshot['files']))
 
     def test_repository_inspection_skips_private_and_generated_files(self):
         with tempfile.TemporaryDirectory() as temp:
