@@ -176,9 +176,12 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
     import sounddevice as sd
     load_model()
     info=sd.query_devices(device,'input')
-    rate=16000
-    try: sd.check_input_settings(device=device,channels=1,dtype='int16',samplerate=rate)
-    except Exception: rate=int(info['default_samplerate'])
+    # Capture at the microphone's native sample rate to avoid relying on
+    # unstable driver-side sample rate conversion. Convert to 16 kHz for VAD/ASR.
+    rate=int(info['default_samplerate'])
+    if rate<=0:
+        rate=16000
+    sd.check_input_settings(device=device,channels=1,dtype='int16',samplerate=rate)
     audio=queue.Queue(maxsize=400)
     chunks=[]
     blocks=0
@@ -194,7 +197,7 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
         emit('recording_seconds',captured_frames/rate)
         try: audio.put_nowait(bytes(data))
         except queue.Full: dropped+=1
-    with sd.RawInputStream(samplerate=rate,blocksize=1600,device=device,dtype='int16',channels=1,callback=callback):
+    with sd.RawInputStream(samplerate=rate,blocksize=max(1,int(rate/10)),device=device,dtype='int16',channels=1,callback=callback):
         diagnostic('recording_started',device=str(info['name']),sample_rate=rate)
         emit('status','Listening — speak naturally, then pause.' if auto_end else 'Listening — speak, then click Done.')
         start=time.monotonic()
@@ -215,7 +218,7 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
     emit('processing_voice',None)
     text=''
     started=time.monotonic()
-    if seconds>=0.65 and peak_rms>=60 and contains_real_speech(b''.join(chunks),rate):
+    if seconds>=0.65 and contains_real_speech(b''.join(chunks),rate):
         text=transcribe_audio(b''.join(chunks),rate)
     diagnostic('recording_finished',engine='whisper-small.en',blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
     if not text:
