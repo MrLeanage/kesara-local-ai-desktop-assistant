@@ -243,13 +243,20 @@ class ParakeetIntegrationTests(unittest.TestCase):
             self.assertFalse((root/'outside.txt').exists())
 
     def test_parakeet_transcription_routes_to_selected_backend(self):
-        import numpy as np
-        with patch.object(voice,'chosen_speech_engine',return_value='parakeet'):
-            with patch.object(voice,'voice_options',return_value={}):
-                with patch.object(parakeet,'transcribe',return_value='Analyze Kesara code') as infer:
-                    words=voice.transcribe_audio(np.zeros(32000,dtype=np.int16).tobytes(),16000)
-                    self.assertEqual(words,'Analyze Kesara code')
-                    self.assertEqual(infer.call_count,1)
+        class FakeWave:
+            def astype(self,kind):
+                return self
+            def __truediv__(self,other):
+                return self
+        fake_numpy=SimpleNamespace(frombuffer=lambda raw,dtype:FakeWave(),
+                                   int16='int16',float32='float32')
+        with patch.dict('sys.modules',{'numpy':fake_numpy}):
+            with patch.object(voice,'chosen_speech_engine',return_value='parakeet'):
+                with patch.object(voice,'voice_options',return_value={}):
+                    with patch.object(parakeet,'transcribe',return_value='Analyze Kesara code') as infer:
+                        words=voice.transcribe_audio(b'\\x00'*32000,16000)
+                        self.assertEqual(words,'Analyze Kesara code')
+                        self.assertEqual(infer.call_count,1)
 
 if __name__=='__main__':
     unittest.main()
