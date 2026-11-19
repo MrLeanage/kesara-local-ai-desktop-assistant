@@ -15,11 +15,62 @@ from voice_safety import requires_voice_review
 from approval_policy import ApprovalPolicy
 from folder_intent import explicit_mkdir_request, target_for_request
 from project_inspector import explicitly_requested_project, inspect_project, structured_report
+import coding_tools
 import io
 import tarfile
 from unittest.mock import patch, Mock
 from desktop import App
 from types import SimpleNamespace
+
+class NativeCodingToolTests(unittest.TestCase):
+    def test_project_map_identifies_project_and_prunes_generated_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/'pom.xml').write_text('<project/>',encoding='utf-8')
+            (root/'App.java').write_text('public class App {}',encoding='utf-8')
+            (root/'node_modules').mkdir()
+            (root/'node_modules'/'junk.js').write_text('invisible',encoding='utf-8')
+            result=coding_tools.project_map(root)
+            self.assertIn('Maven / Java',result)
+            self.assertIn('App.java',result)
+            self.assertNotIn('junk.js',result)
+
+    def test_source_search_is_bounded_and_ignores_private_env(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/'main.py').write_text('def important_work():\\n    return 42',encoding='utf-8')
+            (root/'.env').write_text('important_work=secret',encoding='utf-8')
+            output=coding_tools.search_code(root,'important_work')
+            self.assertIn('main.py:1',output)
+            self.assertNotIn('secret',output)
+            self.assertIn('No matching',coding_tools.search_code(root,'nonexistent_symbol'))
+
+    def test_tests_need_consent_before_subprocess(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'tests').mkdir()
+            with patch.object(coding_tools.subprocess,'run') as runner:
+                result=coding_tools.test_project(root,lambda request:False)
+            self.assertIn('declined',result.lower())
+            runner.assert_not_called()
+
+    def test_test_execution_returns_evidence_and_exit_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'pom.xml').write_text('<project/>')
+            fake=SimpleNamespace(returncode=1,stdout='BUILD FAILURE',stderr='test failed')
+            with patch.object(coding_tools.subprocess,'run',return_value=fake) as runner:
+                result=coding_tools.test_project(root,lambda desc:desc.startswith('TEST '))
+            self.assertIn('Result: FAIL',result)
+            self.assertIn('BUILD FAILURE',result)
+            self.assertEqual(runner.call_args.kwargs['cwd'],root.resolve())
+            self.assertEqual(runner.call_args.args[0],['mvn','test'])
+
+    def test_native_tools_execute_against_selected_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'main.py').write_text('TOKEN_FOR_TEST = 123')
+            result=kesara.execute({'action':'search','text':'TOKEN_FOR_TEST'},root,
+                                  confirm=lambda message:self.fail('No approval needed for search'))
+            self.assertIn('main.py:1',result)
+            self.assertIn('Project:',kesara.execute({'action':'project_map'},root))
 
 class HistoryTests(unittest.TestCase):
     def test_persistent_conversations_and_project_association(self):
