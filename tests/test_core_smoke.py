@@ -147,5 +147,18 @@ class FalseSpeechTests(unittest.TestCase):
         fake=SimpleNamespace(text='Thank you for watching.',avg_logprob=-1.1,no_speech_prob=.1)
         self.assertEqual(voice.filter_transcript_segments([fake]),'')
 
+
+class SpokenResponseTests(unittest.TestCase):
+    def test_long_prose_not_cut_at_700_characters(self):
+        response='Architecture analysis. '+('This repository contains a desktop voice and coding agent. '*35)
+        self.assertEqual(App.spoken_prose(response),response)
+        self.assertGreater(len(App.spoken_prose(response)),700)
+
+    def test_code_block_not_read_aloud(self):
+        response='Here is the plan.\n\n```python\nprint("secret")\n```\n\nReview the result.'
+        speech=App.spoken_prose(response)
+        self.assertNotIn('print(',speech)
+        self.assertIn('Review the result.',speech)
+
 if __name__=='__main__':
     unittest.main()
