@@ -90,3 +90,9 @@ Outcome: better inference/provider flexibility, project memory and optional issu
 | M5 advanced integrations | Backlog | M4 |
 
 > Existing code already supports selecting arbitrary project folders and approval-gated reads/writes/shell. This is **not** proof that self-development is safe or robust; M0/M4 add the necessary checks.
+
+## 2026-11-19 voice-ASR delivery increment
+- Implemented selectable **NVIDIA Parakeet TDT 0.6B V3 INT8** offline speech engine with verified-download installer, `sherpa-onnx` CPU decoding and no paid API.
+- Existing Whisper Small/Medium preserved; users explicitly choose the engine in Voice settings and restart.
+- Added optional dependency manifest, source-only regression tests and Windows setup instructions under `docs/SETUP.md`.
+- **Pending Windows acceptance gate:** install optional Python runtime, download model, compare spoken technical sentences with Whisper and verify low false-positive rate. Do not mark voice recognition reliable based only on CI mocks.
