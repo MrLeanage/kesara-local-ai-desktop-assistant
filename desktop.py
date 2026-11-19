@@ -62,7 +62,8 @@ class App:
         self.listening=False
         self.voice_ready=False
         self.recording_seconds=0
-        self.device=preferred_microphone()
+        try:self.device=preferred_microphone()
+        except Exception:self.device=None  # Missing/broken audio device must not block text chat.
         self.pending=None
         self.approval_window=None
         self.alive=True
