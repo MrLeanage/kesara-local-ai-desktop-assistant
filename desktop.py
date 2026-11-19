@@ -8,7 +8,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import kesara as core
-from character import Character
+from waveform import WaveIndicator
+from history import ChatHistory
 from interaction import Ambient, Camera, command as voice_command
 from voice import Speaker, microphones, record, load_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
@@ -24,6 +25,10 @@ class App:
         self.root=root
         self.events=queue.Queue()
         self.messages=[]
+        self.history=ChatHistory(core.BASE/'chat-history.sqlite3')
+        previous=self.history.list_conversations()
+        self.conversation_id=previous[0][0] if previous else self.history.create(core.PROJECTS.resolve())
+        self.loading_chat=False
         self.streaming_reply=False
         self.model_ready=False
         self.conversation=False
@@ -68,13 +73,18 @@ class App:
         sidebar=tk.Frame(root,bg=PANEL,width=230,padx=22,pady=16)
         sidebar.pack(side='left',fill='y')
         sidebar.pack_propagate(False)
-        self.avatar=Character(sidebar)
+        tk.Label(sidebar,text='KESARA',bg=PANEL,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='center')
+        self.avatar=WaveIndicator(sidebar,width=180,height=85,bg=PANEL)
         self.avatar.pack(anchor='center')
         self.avatar.bind('<Button-1>',lambda event:self.open_companion())
-        tk.Label(sidebar,text='KESARA',bg=PANEL,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='center')
-        tk.Label(sidebar,text='Click character for a larger view',bg=PANEL,fg=MUTED,font=('Segoe UI',8)).pack(anchor='center',pady=(0,12))
+        tk.Label(sidebar,text='Voice activity · click to expand',bg=PANEL,fg=MUTED,font=('Segoe UI',8)).pack(anchor='center',pady=(0,12))
         self.new_button=self.button(sidebar,'+  New conversation',self.new_chat)
         self.new_button.pack(fill='x',pady=5)
+        tk.Label(sidebar,text='HISTORY',bg=PANEL,fg=MUTED,font=('Segoe UI',8,'bold')).pack(anchor='w',pady=(10,4))
+        self.history_list=tk.Listbox(sidebar,bg=CARD,fg=TEXT,selectbackground='#344f65',relief='flat',borderwidth=0,height=9,font=('Segoe UI',9),exportselection=False)
+        self.history_list.pack(fill='x',pady=(0,8))
+        self.history_list.bind('<<ListboxSelect>>',self.open_history)
+        self.history_rows=[]
         self.folder_button=self.button(sidebar,'Choose project folder',self.choose_folder)
         self.folder_button.pack(fill='x',pady=5)
         self.button(sidebar,'Settings',self.settings).pack(fill='x',pady=5)
@@ -105,7 +115,7 @@ class App:
         for tag,color in [('you',ACCENT),('kesara','#a9baff'),('tool',MUTED),('system','#e6be79')]:
             self.chat.tag_configure(tag,foreground=color)
         self.chat.tag_configure('label',font=('Segoe UI',9,'bold'),spacing1=14,spacing3=5)
-        self.append('Kesara','What would you like to build? Type a message, or click Talk.\n\nWhen you finish speaking, click Done, check your words, then Send. I’ll ask before changing files or running commands.','kesara')
+        self.load_conversation(self.conversation_id)
 
         self.status=tk.StringVar(value='Ready · All model and voice processing stays on this PC')
         tk.Label(controls,textvariable=self.status,bg=BG,fg=MUTED,anchor='w',wraplength=740,justify='left',font=('Segoe UI',9)).pack(fill='x',pady=(12,8))
@@ -146,12 +156,56 @@ class App:
         return tk.Button(parent,text=text,command=command,bg=ACCENT if accent else CARD,fg=BG if accent else TEXT,activebackground='#8af0cf' if accent else '#304159',activeforeground=BG if accent else TEXT,relief='flat',borderwidth=0,padx=13,pady=9,cursor='hand2',font=('Segoe UI',10,'bold' if accent else 'normal'))
 
     def append(self,name,text,tag):
+        if not self.loading_chat and name in ('You','Kesara','Tool result','Could not complete request','Conversation mode','Workspace'):
+            self.history.add(self.conversation_id,name.lower(),text)
+            self.refresh_history()
         self.chat.configure(state='normal')
         self.chat.insert('end',name.upper()+'\n',('label',tag))
         self.chat.insert('end',text+'\n\n',tag)
         self.chat.configure(state='disabled')
         self.chat.see('end')
 
+    def refresh_history(self):
+        self.history_rows=self.history.list_conversations()
+        self.history_list.delete(0,'end')
+        for _,title,_ in self.history_rows:
+            self.history_list.insert('end',title)
+        for i,(cid,_,_) in enumerate(self.history_rows):
+            if cid==self.conversation_id:
+                self.history_list.selection_set(i)
+                break
+
+    def load_conversation(self,conversation_id):
+        self.loading_chat=True
+        try:
+            self.conversation_id=conversation_id
+            self.messages=[]  # Display history is not executable tool state.
+            self.chat.configure(state='normal')
+            self.chat.delete('1.0','end')
+            self.chat.configure(state='disabled')
+            messages=self.history.messages(conversation_id)
+            if not messages:
+                self.append('Kesara','What would you like to build? Select a project and ask me to inspect its code. Changes and commands require approval.','kesara')
+            else:
+                for role,body in messages:
+                    tag={'you':'you','kesara':'kesara','tool result':'tool'}.get(role,'system')
+                    self.append(role.capitalize(),body,tag)
+            project=self.history.project(conversation_id)
+            if project and Path(project).is_dir():
+                self.cwd=Path(project).resolve()
+                self.folder_text.set(str(self.cwd))
+            self.refresh_history()
+        finally:
+            self.loading_chat=False
+
+    def open_history(self,event=None):
+        if self.busy or self.listening or self.conversation:
+            return
+        selection=self.history_list.curselection()
+        if selection:
+            cid=self.history_rows[selection[0]][0]
+            if cid!=self.conversation_id:
+                self.load_conversation(cid)
     def emit(self,kind,value): self.events.put((kind,value))
 
     def expression(self,mode):
@@ -161,10 +215,11 @@ class App:
     def open_companion(self):
         if self.companion and self.companion.winfo_exists():
             self.companion.winfo_toplevel().lift();return
-        window=tk.Toplevel(self.root);window.title('Kesara — Character');window.geometry('380x430');window.configure(bg=PANEL)
-        self.companion=Character(window,width=360,height=352);self.companion.pack(fill='both',expand=True,padx=10,pady=10)
+        window=tk.Toplevel(self.root);window.title('Kesara — Voice');window.geometry('380x200');window.configure(bg=PANEL)
+        self.companion=WaveIndicator(window,width=360,height=130,bg=PANEL)
+        self.companion.pack(fill='both',expand=True,padx=10,pady=10)
         self.companion.set_state(self.avatar.mode)
-        tk.Label(window,text='Kesara · Animated AI assistant',bg=PANEL,fg=MUTED).pack(pady=(0,14))
+        tk.Label(window,text='Kesara · Local voice activity',bg=PANEL,fg=MUTED).pack(pady=(0,14))
 
     def interaction_tick(self):
         if not self.alive:return
@@ -358,13 +413,13 @@ class App:
         selected=filedialog.askdirectory(initialdir=str(self.cwd),title='Choose Kesara project folder')
         if selected:
             self.cwd=Path(selected).resolve(); self.folder_text.set(str(self.cwd)); self.messages=[]
+            self.history.set_project(self.conversation_id,self.cwd)
             self.append('Workspace','Working in '+str(self.cwd),'system')
 
     def new_chat(self):
         if self.busy or self.listening: return
-        self.messages=[]
-        self.chat.configure(state='normal'); self.chat.delete('1.0','end'); self.chat.configure(state='disabled')
-        self.append('Kesara','New conversation. Your saved memory is still available.','kesara')
+        self.conversation_id=self.history.create(self.cwd)
+        self.load_conversation(self.conversation_id)
 
     def memory(self):
         window=tk.Toplevel(self.root); window.title('Kesara — Saved memory'); window.geometry('650x440'); window.configure(bg=BG)
@@ -527,7 +582,10 @@ class App:
                     elif value.startswith('Listening'):self.expression('listening')
                 elif kind=='assistant': self.append('Kesara',value,'kesara')
                 elif kind=='answer':
-                    if self.streaming_reply:self.stream_reply(value);self.finish_stream()
+                    if self.streaming_reply:
+                        self.stream_reply(value);self.finish_stream()
+                        self.history.add(self.conversation_id,'kesara',value)
+                        self.refresh_history()
                     else:self.append('Kesara',value,'kesara')
                     self.status.set('Ready')
                     if self.speak_enabled.get():
