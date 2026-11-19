@@ -136,6 +136,37 @@ def recognition_options(settings=None, names=None):
         options['initial_prompt']='Proper names: '+', '.join(names)+'.'
     return options
 
+def speech_clip(waveform, sample_rate=16000):
+    """Trim leading/trailing nonspeech with Silero VAD, preserving 250ms of context.
+
+    Avoid sending a long mostly-silent recording to offline Parakeet, which can
+    produce repeated hallucinated words. This is independent of transcription.
+    """
+    from faster_whisper.vad import get_speech_timestamps, VadOptions
+    spans=get_speech_timestamps(waveform,
+        VadOptions(threshold=0.42,min_speech_duration_ms=140,
+                   min_silence_duration_ms=350,speech_pad_ms=0),
+        sampling_rate=sample_rate)
+    if not spans:
+        return waveform[:0]
+    pad=int(sample_rate*0.25)
+    start=max(0,spans[0]['start']-pad)
+    end=min(len(waveform),spans[-1]['end']+pad)
+    return waveform[start:end]
+
+def repeated_transcript(text):
+    """Reject severe ASR loops instead of sending manufactured instructions."""
+    import re
+    tokens=re.findall(r"[a-z0-9']+",text.lower())
+    if len(tokens)<6:
+        return False
+    for size in range(1,min(6,len(tokens)//3)+1):
+        unit=tokens[:size]
+        if len(tokens)>=size*3 and all(tokens[i:i+size]==unit for i in
+                                         range(0,len(tokens),size)):
+            return True
+    return False
+
 def transcribe_audio(data,rate):
     import numpy as np
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
@@ -143,7 +174,15 @@ def transcribe_audio(data,rate):
         waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,np.arange(len(waveform)),waveform).astype(np.float32)
     if chosen_speech_engine()=='parakeet':
         from parakeet_backend import transcribe
+        waveform=speech_clip(waveform)
+        if len(waveform)<int(16000*.18):
+            return ''
+        # Keep the decoder on a short speech-focused utterance, not 30s of
+        # silent room noise which causes transducer repetition loops.
         transcript=transcribe(waveform)
+        if repeated_transcript(transcript):
+            diagnostic('asr_repetition_discarded',engine='parakeet',characters=len(transcript))
+            return ''
         return apply_corrections(transcript,parse_corrections(voice_options().get('speech_corrections','')))
     options=recognition_options()
     beam=options['beam_size']
