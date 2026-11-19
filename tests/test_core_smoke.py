@@ -84,7 +84,7 @@ class SpeechBootstrapTests(unittest.TestCase):
             folder=Path(temp)
             for name in voice.REQUIRED_MODEL_FILES:
                 (folder/name).write_bytes(b'dummy')
-            with patch.object(voice,'MODEL_PATH',folder):
+            with patch.object(voice,'MODEL_CHOICES',{'small.en':(voice.MODEL_REPOSITORY,folder),'medium.en':('Systran/faster-whisper-medium.en',folder)}):
                 download=Mock()
                 with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=download)}):
                     self.assertFalse(voice.ensure_speech_model())
@@ -98,7 +98,7 @@ class SpeechBootstrapTests(unittest.TestCase):
                 self.assertEqual(kwargs['repo_id'],voice.MODEL_REPOSITORY)
                 for name in voice.REQUIRED_MODEL_FILES:
                     (folder/name).write_bytes(b'dummy')
-            with patch.object(voice,'MODEL_PATH',folder):
+            with patch.object(voice,'MODEL_CHOICES',{'small.en':(voice.MODEL_REPOSITORY,folder),'medium.en':('Systran/faster-whisper-medium.en',folder)}):
                 download=Mock(side_effect=fake_download)
                 with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=download)}):
                     self.assertTrue(voice.ensure_speech_model(events.append))
@@ -174,6 +174,15 @@ class RecognitionConfigurationTests(unittest.TestCase):
         with patch.object(voice,'voice_options',return_value={'microphone_name':'USB Microphone'}):
             self.assertEqual(voice.preferred_microphone([(0,'Webcam'),(3,'USB Microphone')]),3)
             self.assertIsNone(voice.preferred_microphone([(0,'Webcam')]))
+
+class SpeechModelChoiceTests(unittest.TestCase):
+    def test_medium_selected_by_settings(self):
+        with patch.object(voice,'voice_options',return_value={'speech_model':'medium.en'}):
+            self.assertEqual(voice.chosen_speech_model(),'medium.en')
+
+    def test_unknown_model_falls_back_to_small(self):
+        with patch.object(voice,'voice_options',return_value={'speech_model':'bogus'}):
+            self.assertEqual(voice.chosen_speech_model(),'small.en')
 
 if __name__=='__main__':
     unittest.main()
