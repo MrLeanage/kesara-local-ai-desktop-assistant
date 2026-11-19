@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -34,6 +35,9 @@ class App:
         self.model_error=None
         self.conversation=False
         self.pending_voice_send=False
+        self.last_voice_transcript=''
+        self.last_voice_transcript_at=0.0
+        self.last_spoken_reply=''
         self.speech_in_progress=False
         self.speech_id=0
         self.speech_stream_queue=None
@@ -511,6 +515,7 @@ class App:
             self.root.after(500,self.maybe_listen)
 
     def stream_speech(self,text,final=False):
+        if final:self.last_spoken_reply=text
         if not self.conversation or not self.speak_enabled.get():return False
         safe=text.split('```')[0][:700]
         if final:
@@ -543,6 +548,7 @@ class App:
         return True
 
     def speak(self,text):
+        self.last_spoken_reply=text
         # Read short prose only. Keep generated code and long output on screen.
         spoken=text.split('```')[0].strip()[:700]
         if not spoken: return
@@ -646,6 +652,19 @@ class App:
                 elif kind=='voice_unavailable': self.mic_button.configure(text='Voice unavailable',state='disabled')
                 elif kind=='dictation':
                     diagnostic('transcript_received',characters=len(value or ''),conversation=self.conversation)
+                    if value and self.conversation:
+                        # Avoid immediately feeding a repeated hallucination or
+                        # speaker echo back into the agent as a new instruction.
+                        normalized=' '.join(re.findall(r'[a-z0-9]+',value.lower()))
+                        previous=' '.join(re.findall(r'[a-z0-9]+',self.last_voice_transcript.lower()))
+                        spoken=' '.join(re.findall(r'[a-z0-9]+',self.last_spoken_reply.lower()))
+                        now=time.monotonic()
+                        if not normalized or (normalized==previous and now-self.last_voice_transcript_at<30) or (
+                            len(normalized)>=12 and normalized in spoken and self.last_spoken_reply):
+                            self.status.set('Ignored repeated/echoed audio; listening again.')
+                            continue
+                        self.last_voice_transcript=value
+                        self.last_voice_transcript_at=now
                     if value:
                         if self.conversation and voice_command(value)=='quiet':
                             self.quiet();continue
