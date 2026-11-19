@@ -502,6 +502,7 @@ class App:
         selected=filedialog.askdirectory(initialdir=str(self.cwd),title='Choose Kesara project folder')
         if selected:
             self.cwd=Path(selected).resolve(); self.folder_text.set(str(self.cwd)); self.messages=[]
+            self.refresh_permission_policy()
             self.history.set_project(self.conversation_id,self.cwd)
             self.append('Workspace','Working in '+str(self.cwd),'system')
 
