@@ -115,3 +115,63 @@ verification. When any non-default automatic policy is active, every voice
 transcript requires review in the composer before it can be executed. Spoken
 file commands and paths also require review with the default permission policy.
 Use typed requests to avoid transcription uncertainty.
+
+## Multi-model coding engine (November 2026 increment)
+
+Kesara now supports **Ollama (default, local), Google Gemini, Groq and
+OpenRouter** with a standard-library router (`model_router.py`).
+
+1. Update the checkout, start Kesara and open **Settings → AI engines / models**.
+2. Select your model provider; default IDs include `qwen2.5-coder:3b`
+   (Ollama), `gemini-2.5-flash` (Gemini), `openai/gpt-oss-20b`
+   (Groq), and `openrouter/free` (OpenRouter). Model IDs can be changed in
+   the settings window to match currently available free model offerings.
+3. For a cloud provider, create an API key in that provider's official console.
+   Set the corresponding environment variable **outside the repository**:
+   `GEMINI_API_KEY`, `GROQ_API_KEY`, or `OPENROUTER_API_KEY`.
+   Restart Kesara from a process inheriting the variable. Do not type keys
+   into chat messages or commit them to Git.
+4. Check **explicit cloud context-sharing consent**. Kesara displays a second
+   confirmation explaining that conversation, code and tool results may be
+   sent to the chosen cloud provider. Leave it disabled for private/offline work.
+5. Optionally enable fallback to local Ollama when your chosen cloud provider
+   has an HTTP 429/5xx or a temporary network outage. Authentication errors
+   and invalid model output never silently fall back. It does not pick another
+   cloud service without your explicit selection.
+6. Cloud responses must contain an agent JSON action; invalid action output
+   is rejected before any filesystem or shell command executes.
+
+The default remains **offline Ollama**. OpenRouter requests are hard-blocked
+unless the configured model is `openrouter/free` or ends in `:free`.
+**Important:** Gemini and Groq rate limits and billing rules depend on your
+API account and the selected model. Kesara cannot guarantee that those
+provider requests are free if you enable billing. Check the official free
+allowances and billing before enabling cloud. Models may change availability.
+
+This is a **provider-selection and fallback MVP**, not yet an autonomous
+quality-based router with model benchmarking, distributed planning, or review
+consensus. Cloud inference has not been integration-tested using your personal
+API credentials. The CI suite uses simulated network responses only.
+
+## Predictable directory copying
+
+A known defect was generating invalid PowerShell copy commands and sometimes
+interpreting relative destinations in Kesara's `projects` directory. Folder
+copying now uses Python's validated directory-copy tool instead. Use **two full
+quoted absolute paths**:
+
+```text
+Copy all content from "D:\AI works\Kesara 2.0\kesara-v2-test" to "D:\AI works\Kesara 2.0\Kesara-2"
+```
+
+Kesara refuses missing source folders, missing destination parents, existing
+destinations, paths inside source folders, and relative/ambiguous path requests.
+It presents a `COPY source -> destination` permission request before the
+copy, unless the destination is within a separately approved workspace and
+the configured project permission policy covers copies. The copy includes
+all contents (including `.git` and `.venv`) and does not overwrite existing
+folders; check disk space beforehand. It reports an incomplete copy rather
+than claiming success on exceptions.
+
+For copies with short names such as "copy kesara-v2-test to Kesara-2", supply
+full quoted paths. Kesara will not guess relative directories.
