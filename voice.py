@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 from speech_corrections import apply_corrections, parse_corrections
+from turn_detection import TurnDetector, last_speech_end
 
 BASE=Path(__file__).resolve().parent
 MODEL_PATH=BASE/'speech-model'/'whisper-small.en'
@@ -264,18 +265,44 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
         emit('status','Listening — speak naturally, then pause.' if auto_end else 'Listening — speak, then click Done.')
         start=time.monotonic()
         last_endpoint_check=0
-        while not stop.is_set() and time.monotonic()-start<30:
+        detector=TurnDetector() if auto_end else None
+        endpoint=None
+        while not stop.is_set() and time.monotonic()-start<(38 if auto_end else 30):
             try: block=audio.get(timeout=0.2)
-            except queue.Empty: continue
+            except queue.Empty:
+                if auto_end and detector:
+                    action=detector.update(time.monotonic()-start)
+                    if action in ('speech_finished','waiting_timeout','turn_timeout'):
+                        endpoint=action
+                        break
+                continue
             blocks+=1
             chunks.append(block)
-            if auto_end and time.monotonic()-last_endpoint_check>.2:
+            elapsed=captured_frames/rate
+            if auto_end and time.monotonic()-last_endpoint_check>.28:
                 last_endpoint_check=time.monotonic()
-                if speech_finished(b''.join(chunks)[-int(rate*2*5):],rate):break
+                # Sliding 2s window for VAD, with a small lead-in for greeting words.
+                recent=b''.join(chunks)[-int(rate*2*2):]
+                end=last_speech_end(recent,rate)
+                if end is not None:
+                    end=elapsed-len(recent)/(rate*2)+end
+                action=detector.update(elapsed,end)
+                if action=='speech_started':
+                    emit('speech_started',None)
+                elif action in ('speech_finished','waiting_timeout','turn_timeout'):
+                    endpoint=action
+                    emit('speech_ended',action)
+                    break
     while not audio.empty():
         chunks.append(audio.get_nowait())
     seconds=captured_frames/rate
     emit('level',0)
+    if endpoint=='waiting_timeout':
+        # Silence is not a request; resume listening rather than hallucinating.
+        diagnostic('voice_no_turn',reason='waiting_timeout',captured_seconds=round(seconds,2))
+        emit('no_speech','No speech detected yet; listening again.')
+        emit('dictation','')
+        return
     if discard_on_stop and stop.is_set():return
     emit('processing_voice',None)
     text=''
