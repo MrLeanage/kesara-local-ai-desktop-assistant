@@ -110,7 +110,7 @@ class SpeechBootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(voice,'MODEL_PATH',Path(temp)):
                 with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=Mock(side_effect=OSError('offline')))}):
-                    with self.assertRaisesRegex(RuntimeError,'Could not download'):
+                    with self.assertRaisesRegex(RuntimeError,'Unable to download'):
                         voice.ensure_speech_model()
 
 
