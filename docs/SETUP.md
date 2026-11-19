@@ -19,7 +19,7 @@ In a second PowerShell in this repository:
 $env:OLLAMA_HOST='127.0.0.1:11434'
 $env:OLLAMA_MODELS=Join-Path $PWD 'models'
 .\runtime\ollama.exe pull qwen2.5-coder:3b
-.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-small.en', local_dir='speech-model/whisper-small.en')"
+
 ```
 
 3. Download [Vosk small English 0.15](https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip). Extract into `speech-model/vosk-model-small-en-us-0.15/`, without a duplicate nested folder.
@@ -38,3 +38,12 @@ If another Ollama instance owns port 11434, Kesara reuses it. Ensure that server
 - Use a writable directory: models, saved memory, projects and diagnostics live beside the source. Avoid Program Files.
 
 Run `.\.venv\Scripts\python.exe scripts/check_repository.py --runtime` to check prerequisite files. Missing model errors: inspect server.log and Ollama list. Missing imports: repeat pip install and pip check. No speech: check Windows voices, PowerShell and System.Speech. First model load can take tens of seconds.
+
+
+## Automatic first-run speech setup (Kesara 2.0)
+
+After Python dependencies are installed, the desktop starts an asynchronous startup check for `speech-model/whisper-small.en`. If `model.bin`, `config.json`, `tokenizer.json`, or `vocabulary.txt` is absent, Kesara downloads the free `Systran/faster-whisper-small.en` model from Hugging Face into this local folder and loads it. If all four files already exist, no download occurs. Existing files are reused, and a failed download can resume on the next launch.
+
+The status line displays download/loading progress (not a byte-accurate progress meter). Voice remains unavailable until the model loads; **text chat remains available** if the download fails. Internet access and several hundred MB of available disk space are needed for first setup. The startup download contacts Hugging Face; after setup, transcription runs locally. No paid API key is needed.
+
+This automatic setup covers Whisper only. Ollama is still required and its configured `qwen2.5-coder:3b` model must be available on the running server. Optional Vosk name-activation interruption uses its separate Vosk model.
