@@ -80,7 +80,7 @@ def _decode_action(raw):
         text=text.split('\n',1)[-1].rsplit('```',1)[0].strip()
     try: data=json.loads(text)
     except (ValueError,TypeError) as exc:raise ModelError('Model output was not valid JSON') from exc
-    if not isinstance(data,dict) or data.get('action') not in ('answer','list','read','write','mkdir','copy','shell'):
+    if not isinstance(data,dict) or data.get('action') not in ('answer','list','read','search','project_map','test','write','mkdir','copy','shell'):
         raise ModelError('Model did not return a supported structured action')
     for key in ('text','path','content','command','destination'):
         if not isinstance(data.get(key,''),str):
