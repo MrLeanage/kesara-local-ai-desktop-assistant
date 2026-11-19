@@ -31,49 +31,56 @@ def audio_level(data):
 MODEL_REPOSITORY='Systran/faster-whisper-small.en'
 REQUIRED_MODEL_FILES=('model.bin','config.json','tokenizer.json','vocabulary.txt')
 
-def missing_model_files():
-    """Return files that must exist before offline Whisper can load."""
-    return [name for name in REQUIRED_MODEL_FILES if not (MODEL_PATH/name).is_file()]
+MODEL_CHOICES={
+    'small.en':('Systran/faster-whisper-small.en',BASE/'speech-model'/'whisper-small.en'),
+    'medium.en':('Systran/faster-whisper-medium.en',BASE/'speech-model'/'whisper-medium.en'),
+}
+_loaded_model_key=None
+
+def chosen_speech_model():
+    key=voice_options().get('speech_model','small.en')
+    return key if key in MODEL_CHOICES else 'small.en'
+
+def missing_model_files(model_key=None):
+    key=model_key or chosen_speech_model()
+    folder=MODEL_CHOICES[key][1]
+    return [name for name in REQUIRED_MODEL_FILES if not (folder/name).is_file()]
 
 def ensure_speech_model(on_status=None):
-    """Download missing free Whisper files once, without blocking Tk's UI thread.
-
-    Called from a startup worker. Existing complete installations are reused
-    without contacting the network. Failed downloads remain retryable on restart.
-    """
-    missing=missing_model_files()
+    """Install selected free Whisper model on first use, retaining existing models."""
+    key=chosen_speech_model()
+    repository,folder=MODEL_CHOICES[key]
+    missing=missing_model_files(key)
     if not missing:
         return False
     if on_status:
-        on_status('Downloading free offline Whisper speech model (first setup)...')
+        on_status('Downloading '+key+' speech model for local use...')
     try:
         from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id=MODEL_REPOSITORY,
-            local_dir=str(MODEL_PATH),
-            allow_patterns=list(REQUIRED_MODEL_FILES),
-        )
+        snapshot_download(repo_id=repository,local_dir=str(folder),
+                          allow_patterns=list(REQUIRED_MODEL_FILES))
     except Exception as exc:
-        raise RuntimeError(
-            'Could not download offline Whisper model. Check internet access '
-            'and free disk space, then restart Kesara. Details: '+str(exc)
-        ) from exc
-    missing=missing_model_files()
+        raise RuntimeError('Unable to download '+key+' offline model: '+str(exc)) from exc
+    missing=missing_model_files(key)
     if missing:
-        raise RuntimeError('Incomplete Whisper download; missing: '+', '.join(missing))
+        raise RuntimeError('Incomplete speech model: '+', '.join(missing))
     if on_status:
-        on_status('Offline Whisper model downloaded. Initializing recognition...')
+        on_status('Speech model '+key+' downloaded. Loading recognition...')
     return True
 
 def load_model():
-    global _model
+    global _model,_loaded_model_key
+    key=chosen_speech_model()
     with _lock:
-        if _model is None:
+        if _model is None or _loaded_model_key!=key:
             from faster_whisper import WhisperModel
-            missing=missing_model_files()
+            missing=missing_model_files(key)
             if missing:
                 raise RuntimeError('Offline Whisper model files are not ready: '+', '.join(missing))
-            _model=WhisperModel(str(MODEL_PATH),device='cpu',compute_type='int8',cpu_threads=2,num_workers=1,local_files_only=True)
+            _model=WhisperModel(str(MODEL_CHOICES[key][1]),device='cpu',
+                                compute_type='int8',cpu_threads=2,
+                                num_workers=1,local_files_only=True)
+            _loaded_model_key=key
     return _model
 
 def microphones():
