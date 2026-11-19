@@ -382,9 +382,9 @@ class RepositoryInspectionTests(unittest.TestCase):
     def test_fallback_explains_actual_modules_not_just_filenames(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
-            (root/'README.md').write_text('# Kesara\\nKesara is a voice-enabled coding desktop assistant.',encoding='utf-8')
-            (root/'kesara.py').write_text('"""Agent core controls actions and tools."""\\nimport os\\ndef run_turn(): pass',encoding='utf-8')
-            (root/'desktop.py').write_text('"""Desktop chat interface."""\\nimport tkinter\\nclass App: pass',encoding='utf-8')
+            (root/'README.md').write_text('# Kesara\nKesara is a voice-enabled coding desktop assistant.',encoding='utf-8')
+            (root/'kesara.py').write_text('"""Agent core controls actions and tools."""\nimport os\ndef run_turn(): pass',encoding='utf-8')
+            (root/'desktop.py').write_text('"""Desktop chat interface."""\nimport tkinter\nclass App: pass',encoding='utf-8')
             (root/'assets').mkdir()
             (root/'assets'/'three').mkdir()
             (root/'assets'/'three'/'vendor').mkdir()
