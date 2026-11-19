@@ -212,6 +212,25 @@ class SpeechCorrectionsTests(unittest.TestCase):
         self.assertEqual(corrections,[('foo','bar')])
 
 
+class SyncedVoiceDisplayTests(unittest.TestCase):
+    def test_text_waits_for_voice_playback_then_reveals_progressively(self):
+        app=App.__new__(App)
+        app.conversation=True
+        app.speech_in_progress=True
+        app.voice_playback_started=False
+        app.voice_reply_full='Hello Kesara, I can help.'
+        app.voice_reply_target='Hello Kesara, I can help.'
+        app.voice_reply_visible=''
+        app.voice_reply_tick_active=True
+        app.root=SimpleNamespace(after=Mock())
+        app.stream_reply=Mock()
+        app.advance_voice_reply()
+        app.stream_reply.assert_not_called()
+        app.voice_playback_started=True
+        app.advance_voice_reply()
+        self.assertEqual(app.voice_reply_visible,'He')
+        app.stream_reply.assert_called_once_with('He')
+
 class HandsFreeTurnTests(unittest.TestCase):
     def test_detects_speech_start_and_natural_pause(self):
         detector=TurnDetector(silence_seconds=1.0,min_speech_seconds=.2)
