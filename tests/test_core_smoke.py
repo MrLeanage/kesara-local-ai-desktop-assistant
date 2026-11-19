@@ -286,7 +286,7 @@ class ParakeetIntegrationTests(unittest.TestCase):
         with patch.dict('sys.modules',{'numpy':fake_numpy}):
             with patch.object(voice,'chosen_speech_engine',return_value='parakeet'):
                 with patch.object(voice,'voice_options',return_value={}):
-                    with patch.object(parakeet,'transcribe',return_value='Analyze Kesara code') as infer:
+                    with patch.object(parakeet,'transcribe',return_value='Analyze Kesara code') as infer, patch.object(voice,'speech_clip',return_value=[0]*32000):
                         words=voice.transcribe_audio(b'\\x00'*32000,16000)
                         self.assertEqual(words,'Analyze Kesara code')
                         self.assertEqual(infer.call_count,1)
