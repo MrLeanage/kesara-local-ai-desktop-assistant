@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import kesara as core
+import model_router
 from waveform import WaveIndicator
 from history import ChatHistory
 from speech_corrections import parse_corrections, format_corrections
@@ -111,7 +112,7 @@ class App:
         bottom=tk.Frame(sidebar,bg=PANEL)
         bottom.pack(side='bottom',fill='x')
         tk.Label(bottom,text='●  LOCAL INFERENCE',bg=PANEL,fg=ACCENT,font=('Segoe UI',9,'bold')).pack(anchor='w')
-        self.model_state=tk.StringVar(value='Qwen2.5-Coder · 3B\nPreparing local AI...')
+        self.model_state=tk.StringVar(value=self.model_description())
         tk.Label(bottom,textvariable=self.model_state,bg=PANEL,fg=MUTED,justify='left',font=('Segoe UI',9)).pack(anchor='w',pady=(7,0))
 
         main=tk.Frame(root,bg=BG,padx=26,pady=24)
@@ -152,7 +153,7 @@ class App:
         self.chat.tag_configure('label',font=('Segoe UI',9,'bold'),spacing1=14,spacing3=5)
         self.load_conversation(self.conversation_id)
 
-        self.status=tk.StringVar(value='Ready · All model and voice processing stays on this PC')
+        self.status=tk.StringVar(value='Ready · Cloud usage is opt-in; configure AI engines in Settings.')
         tk.Label(controls,textvariable=self.status,bg=BG,fg=MUTED,anchor='w',wraplength=740,justify='left',font=('Segoe UI',9)).pack(fill='x',pady=(12,8))
         self.composer=tk.Text(controls,height=3,bg=CARD,fg=TEXT,insertbackground=ACCENT,relief='flat',padx=12,pady=10,wrap='word',font=('Segoe UI',11))
         self.composer.pack(fill='x')
@@ -529,11 +530,71 @@ class App:
         target=filedialog.asksaveasfilename(title='Export conversation',defaultextension='.txt',filetypes=[('Text file','*.txt')])
         if target: Path(target).write_text(self.chat.get('1.0','end'),encoding='utf-8')
 
+    @staticmethod
+    def model_description():
+        config=model_router.configuration()
+        name,model=model_router.chosen_model(config)
+        return name.capitalize()+' · '+model+'\\n'+('Cloud opt-in' if name!='ollama' else 'Local inference')
+
+    def ai_engine_settings(self):
+        if self.busy:
+            self.status.set('Finish the current task before switching AI models.');return
+        config=model_router.configuration()
+        window=tk.Toplevel(self.root);window.title('Kesara — AI engines')
+        window.geometry('710x690');window.configure(bg=BG)
+        tk.Label(window,text='AI engines · Local + Cloud',bg=BG,fg=TEXT,
+                 font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(16,8))
+        tk.Label(window,text='Choose one engine for coding. Cloud usage is opt-in and sends prompts, chat and project source context to that provider.',
+                 bg=BG,fg=MUTED,wraplength=660,justify='left').pack(anchor='w',padx=20,pady=(0,12))
+        options=list(model_router.PROVIDERS)
+        tk.Label(window,text='Primary provider',bg=BG,fg=TEXT).pack(anchor='w',padx=20)
+        provider=ttk.Combobox(window,values=options,state='readonly',width=35)
+        provider.set(config['provider']);provider.pack(anchor='w',padx=20,pady=(4,10))
+        entries={}
+        for name in options:
+            tk.Label(window,text=name.capitalize()+' model ID',bg=BG,fg=TEXT).pack(anchor='w',padx=20)
+            entry=tk.Entry(window,bg=CARD,fg=TEXT,insertbackground=TEXT,relief='flat',width=65)
+            entry.insert(0,config['models'][name]);entry.pack(fill='x',padx=20,ipady=5,pady=(2,8))
+            entries[name]=entry
+        consent=tk.BooleanVar(value=config['cloud_consent'])
+        fallback=tk.BooleanVar(value=config['fallback'])
+        tk.Checkbutton(window,text='I consent to sending project context to configured cloud AI providers',
+                      variable=consent,bg=BG,fg=TEXT,selectcolor=CARD,
+                      activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(8,2))
+        tk.Checkbutton(window,text='Fallback to local Ollama only when the cloud provider is temporarily unavailable',
+                      variable=fallback,bg=BG,fg=TEXT,selectcolor=CARD,
+                      activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(0,8))
+        tk.Label(window,text='API keys are read from GEMINI_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY in Windows.\\n'
+                 'OpenRouter: only :free models or openrouter/free. No automatic paid-model selection.\\n'
+                 'Other providers may bill depending on your account; check free-tier eligibility before enabling.',
+                 bg=BG,fg=MUTED,wraplength=660,justify='left').pack(anchor='w',padx=20,pady=(0,12))
+        def save():
+            chosen=provider.get()
+            if chosen!='ollama' and not consent.get():
+                messagebox.showerror('Cloud consent required','Enable explicit cloud consent or select local Ollama.',parent=window)
+                return
+            if chosen!='ollama':
+                confirmed=messagebox.askyesno('Send project source to cloud?',
+                    'Kesara may send prompts, source files and tool results to '+chosen+
+                    '. Free quotas and provider data-use rules vary. Continue?',parent=window)
+                if not confirmed:return
+            config.update(provider=chosen,cloud_consent=consent.get(),fallback=fallback.get(),
+                          models={key:entry.get().strip() for key,entry in entries.items()})
+            try:model_router.save_configuration(config)
+            except ValueError as exc:
+                messagebox.showerror('Invalid model settings',str(exc),parent=window);return
+            self.model_state.set(self.model_description())
+            self.model_ready=chosen!='ollama'
+            self.status.set('AI engine updated: '+chosen+'. Keys must be set in your Windows environment.')
+            window.destroy()
+        self.button(window,'Save AI engine settings',save,accent=True).pack(anchor='e',padx=20,pady=10)
+
     def settings(self):
-        window=tk.Toplevel(self.root); window.title('Kesara — Settings'); window.geometry('440x350'); window.configure(bg=BG)
+        window=tk.Toplevel(self.root); window.title('Kesara — Settings'); window.geometry('440x400'); window.configure(bg=BG)
         tk.Label(window,text='Settings',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,12))
         tk.Checkbutton(window,text='Speak replies aloud',variable=self.speak_enabled,bg=BG,fg=TEXT,selectcolor=CARD,activebackground=BG,activeforeground=TEXT,command=self.speech_toggle).pack(anchor='w',padx=20,pady=(0,15))
         def open_panel(command): window.destroy(); command()
+        self.button(window,'AI engines / models',lambda:open_panel(self.ai_engine_settings)).pack(fill='x',padx=20,pady=5)
         self.button(window,'Choose microphone',lambda:open_panel(self.voice_settings)).pack(fill='x',padx=20,pady=5)
         self.button(window,'Saved memory',lambda:open_panel(self.memory)).pack(fill='x',padx=20,pady=5)
         self.button(window,'Export conversation',lambda:open_panel(self.export)).pack(fill='x',padx=20,pady=5)
@@ -800,11 +861,11 @@ class App:
                     if not self.busy: self.status.set('Ready. Click Talk, wait for Listening, then speak.' if self.model_ready else 'Preparing the local AI. You can type while it loads.')
                 elif kind=='model_ready':
                     self.model_ready=True
-                    self.model_state.set('Qwen2.5-Coder · 3B\nReady · CPU mode')
+                    self.model_state.set(self.model_description())
                     if not self.busy and not self.listening:self.status.set('Ready. Local AI is loaded.')
                 elif kind=='model_warm_error':
                     self.model_error=str(value)
-                    self.model_state.set('Qwen2.5-Coder · 3B\nModel warm-up failed; check Ollama')
+                    self.model_state.set(self.model_description()+'\\nCheck Ollama/server')
                     if not self.busy:self.status.set('AI model warm-up failed; first voice request may fail. Check Ollama.')
                 elif kind=='voice_unavailable': self.mic_button.configure(text='Voice unavailable',state='disabled')
                 elif kind=='dictation':
