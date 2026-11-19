@@ -11,7 +11,7 @@ import kesara as core
 from waveform import WaveIndicator
 from history import ChatHistory
 from interaction import Ambient, Camera, command as voice_command
-from voice import Speaker, microphones, record, load_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
+from voice import Speaker, microphones, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
 BG='#10151f'
 PANEL='#171f2c'
@@ -135,6 +135,8 @@ class App:
         root.after(60,self.poll)
         def prepare_voice():
             try:
+                ensure_speech_model(on_status=lambda message:self.emit('voice_setup_status',message))
+                self.emit('voice_setup_status','Loading local speech recognition...')
                 load_model()
                 self.emit('voice_ready',None)
             except Exception as exc:
@@ -622,6 +624,9 @@ class App:
                 elif kind=='level':
                     self.level.configure(value=value);self.avatar.set_level(value)
                     if self.companion and self.companion.winfo_exists():self.companion.set_level(value)
+                elif kind=='voice_setup_status':
+                    self.status.set(value)
+                    self.mic_button.configure(text='Preparing voice...',state='disabled')
                 elif kind=='voice_ready':
                     self.voice_ready=True
                     self.mic_button.configure(text='●  Talk',state='disabled' if self.busy else 'normal')
