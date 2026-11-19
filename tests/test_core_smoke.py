@@ -6,6 +6,9 @@ from history import ChatHistory
 from speech_corrections import parse_corrections, apply_corrections, format_corrections
 import kesara
 import voice
+import parakeet_backend as parakeet
+import io
+import tarfile
 from unittest.mock import patch, Mock
 from desktop import App
 from types import SimpleNamespace
@@ -206,6 +209,47 @@ class SpeechCorrectionsTests(unittest.TestCase):
     def test_invalid_corrections_are_ignored(self):
         corrections=parse_corrections('bad line\n => test\nA => A\nfoo => bar')
         self.assertEqual(corrections,[('foo','bar')])
+
+
+class ParakeetIntegrationTests(unittest.TestCase):
+    def test_engine_selection_defaults_to_whisper(self):
+        with patch.object(voice,'voice_options',return_value={}):
+            self.assertEqual(voice.chosen_speech_engine(),'whisper')
+        with patch.object(voice,'voice_options',return_value={'speech_engine':'parakeet'}):
+            self.assertEqual(voice.chosen_speech_engine(),'parakeet')
+
+    def test_parakeet_model_install_reused_without_network(self):
+        with patch.object(voice,'chosen_speech_engine',return_value='parakeet'):
+            with patch.object(parakeet,'ensure_model',return_value=False) as install:
+                self.assertFalse(voice.ensure_speech_model())
+                install.assert_called_once()
+
+    def test_offline_archive_extraction_ignores_unexpected_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            archive_path=root/'sample.tar.bz2'
+            with tarfile.open(archive_path,'w:bz2') as archive:
+                for name in parakeet.REQUIRED:
+                    data=b'x'*250
+                    info=tarfile.TarInfo(parakeet.INNER_DIR+'/'+name)
+                    info.size=len(data)
+                    archive.addfile(info,io.BytesIO(data))
+                unsafe=tarfile.TarInfo('../../outside.txt')
+                unsafe.size=6
+                archive.addfile(unsafe,io.BytesIO(b'unsafe'))
+            destination=root/'parakeet'
+            parakeet.unpack_verified_archive(archive_path,destination)
+            self.assertTrue(parakeet.is_installed(destination))
+            self.assertFalse((root/'outside.txt').exists())
+
+    def test_parakeet_transcription_routes_to_selected_backend(self):
+        import numpy as np
+        with patch.object(voice,'chosen_speech_engine',return_value='parakeet'):
+            with patch.object(voice,'voice_options',return_value={}):
+                with patch.object(parakeet,'transcribe',return_value='Analyze Kesara code') as infer:
+                    words=voice.transcribe_audio(np.zeros(32000,dtype=np.int16).tobytes(),16000)
+                    self.assertEqual(words,'Analyze Kesara code')
+                    self.assertEqual(infer.call_count,1)
 
 if __name__=='__main__':
     unittest.main()
