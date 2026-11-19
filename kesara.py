@@ -7,6 +7,7 @@ import urllib.request
 import datetime
 import shutil
 from copy_intent import request_paths, is_copy_request
+from project_inspector import INSPECT, explicitly_requested_project, inspect_project, summary_fallback
 import re
 import time
 from folder_intent import target_for_request
@@ -204,6 +205,47 @@ def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
     explicit_path=re.search(r'[A-Za-z]:[\\\\/]|(?:^|\\s)/[^\\s]+',prompt)
     if folder_request and explicit_path:
         emit('answer','I could not determine the exact destination reliably. No folder was created. Please type or select the full parent folder path and the folder name.')
+        return
+    # Summary requests are read-only and grounded in actual source files.
+    # Explicit user-provided directories take precedence over the UI workspace.
+    if INSPECT.search(prompt):
+        inspected=explicitly_requested_project(prompt)
+        # If an absolute Windows path was specified but is unavailable,
+        # never quietly analyze an unrelated selected project instead.
+        if inspected is None and re.search(r'[A-Za-z]:[\\\\/]',prompt):
+            emit('answer','I could not verify the project folder in your request. No other project was substituted. Select the exact folder or provide its full path.')
+            return
+        inspected=inspected or Path(cwd).resolve()
+        if inspected!=Path(cwd).resolve():
+            if not confirm('Inspect project outside selected workspace: '+str(inspected)):
+                emit('answer','Project inspection declined; no files were read.')
+                return
+        try:
+            snapshot=inspect_project(inspected)
+        except (OSError,ValueError) as exc:
+            emit('answer','Could not inspect '+str(inspected)+': '+str(exc))
+            return
+        emit('tool','Inspected project '+snapshot['root']+'; sampled '+str(len(snapshot['sampled']))+' files.')
+        if not snapshot['sampled']:
+            emit('answer',summary_fallback(snapshot))
+            return
+        # Ground the completion in source evidence, not a simulated tool action
+        # or an empty file listing.
+        inspection_prompt=('User request: '+prompt+'\nActual inspected project root: '+snapshot['root']+
+            '\nBelow are verified source excerpts. Explain project purpose, technologies, architecture and notable modules; cite filenames. '
+            'Do not claim to have examined files not in this evidence. If information is incomplete, say so. '
+            'Return a JSON answer action only, with text containing the detailed summary.\n\n'+snapshot['evidence'])
+        messages.append({'role':'user','content':inspection_prompt})
+        try:
+            raw=request([{'role':'system','content':system_prompt(inspected)}]+messages)
+            parsed=json.loads(raw)
+            answer=parsed.get('text','') if parsed.get('action')=='answer' else ''
+            if len(answer.strip())<100 or ('cannot provide a summary' in answer.lower()) or ('please provide' in answer.lower()):
+                answer=summary_fallback(snapshot)
+        except (ValueError,KeyError,RuntimeError) as exc:
+            emit('status','Model summary unavailable: '+str(exc))
+            answer=summary_fallback(snapshot)
+        emit('answer',answer)
         return
     # Keep the active workspace explicit even when Whisper mishears a path.
     # This is verified application state, not a claim made by the speech model.
