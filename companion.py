@@ -77,8 +77,15 @@ class CompanionHome:
             phase='Approval needed'
             detail='Review the proposed code or command in the approval window.'
         elif app.listening:
-            phase='Listening' if app.mic_button.cget('text')!='Transcribing...' else 'Transcribing'
-            detail='Speak naturally, then pause. No Send button needed.'
+            if app.mic_button.cget('text')=='Transcribing...':
+                phase='Transcribing'
+                detail='Speech ended. Recognizing locally...'
+            elif getattr(app,'user_speaking',False):
+                phase='Hearing you'
+                detail='I detected your speech. Continue talking naturally.'
+            else:
+                phase='Listening for speech'
+                detail='Start talking. Kesara detects your pause automatically.'
         elif app.speech_in_progress:
             phase='Speaking'
             detail='I will listen again after replying.'
