@@ -100,6 +100,9 @@ def system_prompt(cwd):
     return ('You are Kesara, pronounced Kae-sa-ra, a local Windows coding assistant. '
         'Return one JSON action per turn: answer, list, read, write, or shell. '
         'Use paths relative to the working directory or absolute paths. '
+        'The working directory is already the selected project. When the user says this project, current project, here, or points to this folder, use this working directory. NEVER ask the user to repeat its path. '
+        'For a request to inspect or analyze the codebase, your first action MUST be list with path "."; then read relevant project files before answering. '
+        'Do not infer architecture from a folder name alone. If an explicitly spoken or typed path is ambiguous, use the selected project folder instead or ask for confirmation before changing folders. '
         'Use tools to do requested work and inspect actual results. Never claim execution without evidence. '
         'For ordinary conversation, answer briefly unless asked for detail. '
         'File writes and shell commands require user approval. Respect declined actions; do not retry them. '
@@ -112,7 +115,12 @@ def system_prompt(cwd):
         'Working directory: '+str(cwd)+'\nSaved preferences: '+json.dumps(memory))
 
 def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
-    messages.append({'role':'user','content':prompt})
+    # Keep the active workspace explicit even when Whisper mishears a path.
+    # This is verified application state, not a claim made by the speech model.
+    messages.append({'role':'user','content':(
+        'Selected project folder (verified by Kesara): '+str(cwd)+
+        '\\nUser request: '+prompt
+    )})
     system = system_prompt(cwd)
     for _ in range(12):
         if cancelled.is_set():
