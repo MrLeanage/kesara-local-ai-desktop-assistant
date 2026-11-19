@@ -64,6 +64,23 @@ class NativeCodingToolTests(unittest.TestCase):
             self.assertEqual(runner.call_args.kwargs['cwd'],root.resolve())
             self.assertEqual(runner.call_args.args[0],['mvn','test'])
 
+    def test_direct_chat_commands_skip_model_and_use_selected_project(self):
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'module.py').write_text('def find_this_symbol(): pass',encoding='utf-8')
+            events=[]
+            with patch.object(kesara,'request',side_effect=AssertionError('Model must not run')):
+                kesara.run_turn('/search find_this_symbol',[],root,
+                                lambda kind,value:events.append((kind,value)),
+                                lambda request:False,threading.Event())
+            self.assertTrue(any(kind=='answer' and 'module.py:1' in value for kind,value in events))
+            events.clear()
+            with patch.object(kesara,'request',side_effect=AssertionError('Model must not run')):
+                kesara.run_turn('/map',[],root,
+                                lambda kind,value:events.append((kind,value)),
+                                lambda request:False,threading.Event())
+            self.assertTrue(any(kind=='answer' and 'Project:' in value for kind,value in events))
+
     def test_native_tools_execute_against_selected_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);(root/'main.py').write_text('TOKEN_FOR_TEST = 123')
