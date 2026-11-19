@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from history import ChatHistory
+from speech_corrections import parse_corrections, apply_corrections, format_corrections
 import kesara
 import voice
 from unittest.mock import patch, Mock
@@ -190,6 +191,21 @@ class SpeechModelChoiceTests(unittest.TestCase):
     def test_unknown_model_falls_back_to_small(self):
         with patch.object(voice,'voice_options',return_value={'speech_model':'bogus'}):
             self.assertEqual(voice.chosen_speech_model(),'small.en')
+
+
+class SpeechCorrectionsTests(unittest.TestCase):
+    def test_exact_name_correction_not_arbitrary_guesses(self):
+        corrections=parse_corrections('Chris Pringle => Uthpala\nKukpala => Uthpala')
+        self.assertEqual(apply_corrections('My name is Chris Pringle.',corrections),
+                         'My name is Uthpala.')
+        self.assertEqual(apply_corrections('Kukpala here.',corrections),'Uthpala here.')
+        self.assertEqual(apply_corrections('We reviewed Pringleton.',corrections),
+                         'We reviewed Pringleton.')
+        self.assertEqual(format_corrections(corrections).count('=>'),2)
+
+    def test_invalid_corrections_are_ignored(self):
+        corrections=parse_corrections('bad line\n => test\nA => A\nfoo => bar')
+        self.assertEqual(corrections,[('foo','bar')])
 
 if __name__=='__main__':
     unittest.main()
