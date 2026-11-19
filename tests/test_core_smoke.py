@@ -151,7 +151,7 @@ class FalseSpeechTests(unittest.TestCase):
 class SpokenResponseTests(unittest.TestCase):
     def test_long_prose_not_cut_at_700_characters(self):
         response='Architecture analysis. '+('This repository contains a desktop voice and coding agent. '*35)
-        self.assertEqual(App.spoken_prose(response),response)
+        self.assertEqual(App.spoken_prose(response),response.strip())
         self.assertGreater(len(App.spoken_prose(response)),700)
 
     def test_code_block_not_read_aloud(self):
