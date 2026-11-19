@@ -31,6 +31,7 @@ class App:
         self.loading_chat=False
         self.streaming_reply=False
         self.model_ready=False
+        self.model_error=None
         self.conversation=False
         self.pending_voice_send=False
         self.speech_in_progress=False
@@ -226,7 +227,7 @@ class App:
     def interaction_tick(self):
         if not self.alive:return
         mode=None
-        if self.hands_free and self.voice_ready and self.model_ready and not self.listening:
+        if self.hands_free and self.voice_ready and not self.listening:
             mode='quiet' if self.busy or self.speech_in_progress else ('wake' if not self.conversation else None)
         self.ambient.configure(mode,self.device)
         if self.camera_enabled and (not self.camera.thread or not self.camera.thread.is_alive()):self.camera.start()
@@ -270,15 +271,15 @@ class App:
     def toggle_conversation(self,initial_message=None,acknowledge=False):
         if self.conversation:
             self.end_conversation();return
-        if not self.voice_ready or not self.model_ready:
-            self.status.set('Wait until the local AI and voice are ready, then start conversation.');return
+        if not self.voice_ready:
+            self.status.set('Voice recognition is still loading. Text chat remains available.');return
         if self.busy or self.listening:
             self.status.set('Finish the current task or recording first.');return
         self.preserve_draft()
         self.conversation=True;self.speak_enabled.set(True)
         self.conversation_button.configure(text='End conversation')
         self.folder_button.configure(state='disabled');self.new_button.configure(state='disabled')
-        self.append('Conversation mode','Microphone on between replies. Speak naturally; a pause ends your turn and sends it automatically. End conversation returns to name activation if enabled; otherwise the microphone switches off. File changes still need approval.','system')
+        self.append('Conversation mode','Hands-free voice started from the floating panel or workspace. Speak naturally and pause; Kesara submits your words automatically, responds aloud, then listens again. Stop ends the loop. File changes still require approval.','system')
         if initial_message:
             self.composer.insert('1.0',initial_message);self.send()
         elif acknowledge:
@@ -296,7 +297,7 @@ class App:
         self.status.set('Conversation ended. Name activation remains on.' if self.hands_free else 'Conversation ended. Microphone off; any running task can be stopped with Stop.')
 
     def maybe_listen(self):
-        if self.alive and self.conversation and not self.busy and not self.listening and not self.speech_in_progress and self.pending is None:
+        if self.alive and self.conversation and self.voice_ready and not self.busy and not self.listening and not self.speech_in_progress and self.pending is None:
             self.toggle_mic()
 
     def stream_reply(self,text):
@@ -490,7 +491,7 @@ class App:
         self.recording_seconds=0
         self.mic_button.configure(text='■  Done')
         self.send_button.configure(state='disabled'); self.new_button.configure(state='disabled'); self.folder_button.configure(state='disabled')
-        self.status.set('Opening microphone...')
+        self.status.set('Listening for your voice...')
         device=self.device
         automatic=self.conversation
         def work():
@@ -613,7 +614,7 @@ class App:
                 elif kind=='partial': self.status.set(f'Listening · {self.recording_seconds:.0f}s — '+('Heard: '+value[-100:] if value.strip() else 'speak a full sentence, then Done'))
                 elif kind=='recording_seconds':
                     self.recording_seconds=value
-                    self.status.set(f'Listening · {value:.0f}s — speak, then click Done')
+                    self.status.set(f'Listening · {value:.0f}s — speak, then pause.' if self.conversation else f'Listening · {value:.0f}s — speak, then click Done')
                 elif kind=='processing_voice':
                     self.expression('thinking')
                     self.status.set('Transcribing locally with Whisper. This can take a few seconds...')
@@ -636,7 +637,9 @@ class App:
                     self.model_state.set('Qwen2.5-Coder · 3B\nReady · CPU mode')
                     if not self.busy and not self.listening:self.status.set('Ready. Local AI is loaded.')
                 elif kind=='model_warm_error':
-                    self.model_state.set('Qwen2.5-Coder · 3B\nLoads on first request')
+                    self.model_error=str(value)
+                    self.model_state.set('Qwen2.5-Coder · 3B\nModel warm-up failed; check Ollama')
+                    if not self.busy:self.status.set('AI model warm-up failed; first voice request may fail. Check Ollama.')
                 elif kind=='voice_unavailable': self.mic_button.configure(text='Voice unavailable',state='disabled')
                 elif kind=='dictation':
                     diagnostic('transcript_received',characters=len(value or ''),conversation=self.conversation)
