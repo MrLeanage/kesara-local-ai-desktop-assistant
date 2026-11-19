@@ -93,6 +93,8 @@ def execute(action, cwd, confirm=None):
         raise ValueError('Missing required fields: '+', '.join(required))
     path = resolve(action.get('path','.'),cwd)
     if kind == 'list':
+        if not path.is_relative_to(cwd.resolve()) and not confirm('List outside selected project: '+str(path)):
+            return 'User declined listing outside the selected project.'
         return '\n'.join(('DIR  ' if p.is_dir() else 'FILE ') + p.name for p in list(path.iterdir())[:150])
     if kind == 'read':
         # The user-selected workspace is a valid root, even when it lives
