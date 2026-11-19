@@ -96,3 +96,22 @@ Outcome: better inference/provider flexibility, project memory and optional issu
 - Existing Whisper Small/Medium preserved; users explicitly choose the engine in Voice settings and restart.
 - Added optional dependency manifest, source-only regression tests and Windows setup instructions under `docs/SETUP.md`.
 - **Pending Windows acceptance gate:** install optional Python runtime, download model, compare spoken technical sentences with Whisper and verify low false-positive rate. Do not mark voice recognition reliable based only on CI mocks.
+
+## 2026-11-19 coding agent reliability review
+**Fixed / implemented**
+- Deterministic `mkdir` action for explicit directory + folder-name requests. It uses the user's resolved absolute destination, not implicitly the selected project root. Creates nothing if the parent is missing or the folder already exists.
+- Reads inside the *selected project* no longer prompt merely because that project is outside Kesara's internal `projects/` folder.
+- Folder creation participates in project-scoped write approval settings.
+- Ambiguous explicit folder paths fail closed instead of executing a guessed PowerShell `mkdir`.
+- Regression tests cover explicit folder destinations, idempotency, scoped approvals and selected-workspace reads.
+
+**Next critical engineering improvements (not yet implemented)**
+1. Separate typed/confirmed intent from ASR transcript, show resolved target preview and a diff/plan before consequential work.
+2. Replace generic shell-first file operations with typed filesystem tools (mkdir, move, delete, copy, path existence, search), path normalization and sandbox/allowlist boundaries.
+3. Add repository indexing, source-symbol search, dependency awareness and language-specific project detectors for Maven/Gradle, Flutter, Python.
+4. Replace full-file rewrite actions with structured patch/diff application, git branch isolation and rollback.
+5. Add explicit plan-execute-verify loops, automated test runners and evidence-based completion reports.
+6. Upgrade reasoning models when hardware/cloud budget permits; the 3B coding model should not be trusted to infer filesystem paths from noisy transcripts.
+7. Reduce repeated approvals using fine-grained capability-scoped policies rather than unrestricted PowerShell authorizations.
+
+**Acceptance gate:** verify correct explicit Windows destination with spaces, verify the active project reading a file outside `projects/`, verify no changes occur after declined approval. CI mocks cannot prove end-to-end Windows shell/audio behavior.
