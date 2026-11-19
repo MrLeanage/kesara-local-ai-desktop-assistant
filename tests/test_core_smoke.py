@@ -7,6 +7,7 @@ from speech_corrections import parse_corrections, apply_corrections, format_corr
 import kesara
 import voice
 import parakeet_backend as parakeet
+from turn_detection import TurnDetector
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -210,6 +211,25 @@ class SpeechCorrectionsTests(unittest.TestCase):
         corrections=parse_corrections('bad line\n => test\nA => A\nfoo => bar')
         self.assertEqual(corrections,[('foo','bar')])
 
+
+class HandsFreeTurnTests(unittest.TestCase):
+    def test_detects_speech_start_and_natural_pause(self):
+        detector=TurnDetector(silence_seconds=1.0,min_speech_seconds=.2)
+        self.assertIsNone(detector.update(.4))
+        self.assertEqual(detector.update(1.1,1.0),'speech_started')
+        self.assertIsNone(detector.update(1.6,1.5))
+        self.assertIsNone(detector.update(2.3))
+        self.assertEqual(detector.update(2.6),'speech_finished')
+
+    def test_waits_for_speech_without_creating_fake_request(self):
+        detector=TurnDetector(max_wait_seconds=10)
+        self.assertIsNone(detector.update(9.9))
+        self.assertEqual(detector.update(10.1),'waiting_timeout')
+
+    def test_turn_timeout_for_continuous_speech(self):
+        detector=TurnDetector(max_turn_seconds=5)
+        self.assertEqual(detector.update(.5,.4),'speech_started')
+        self.assertEqual(detector.update(5.2,5.1),'turn_timeout')
 
 class TranscriptSafetyTests(unittest.TestCase):
     def test_repeating_parakeet_phrase_is_rejected(self):
