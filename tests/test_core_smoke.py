@@ -158,6 +158,17 @@ class ReliableCopyTests(unittest.TestCase):
                                    confirm=lambda desc:self.fail('Must reject overwrites'))
             self.assertIn('already exists',message)
 
+    def test_listing_outside_project_requires_approval(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=root/'workspace';workspace.mkdir()
+            outside=root/'private';outside.mkdir()
+            (outside/'secret.txt').write_text('private')
+            attempts=[]
+            result=kesara.execute({'action':'list','path':str(outside)},workspace,
+                                  confirm=lambda description:attempts.append(description) or False)
+            self.assertIn('declined',result.lower())
+            self.assertTrue(attempts)
+
     def test_copy_outside_project_not_auto_approved(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);workspace=root/'project';workspace.mkdir()
