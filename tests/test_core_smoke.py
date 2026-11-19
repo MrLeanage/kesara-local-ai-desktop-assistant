@@ -9,6 +9,7 @@ import voice
 import parakeet_backend as parakeet
 from turn_detection import TurnDetector
 from voice_safety import requires_voice_review
+from approval_policy import ApprovalPolicy
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -38,6 +39,50 @@ class HistoryTests(unittest.TestCase):
             cid=store.create()
             store.add(cid,'you',' ')
             self.assertEqual(store.messages(cid),[])
+
+class PermissionPolicyTests(unittest.TestCase):
+    def test_project_scoped_session_permission_and_reset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            one=root/'one';two=root/'two'
+            one.mkdir();two.mkdir()
+            policy=ApprovalPolicy(root/'policy.json')
+            desc='WRITE '+str(one/'hello.py')+'\\nprint(123)'
+            self.assertFalse(policy.allows(one,desc))
+            policy.set_mode(one,'session_write')
+            self.assertTrue(policy.allows(one,desc))
+            self.assertFalse(policy.allows(two,'WRITE '+str(two/'hello.py')+'\\nhello'))
+            self.assertFalse(policy.allows(one,'WRITE '+str(two/'hello.py')+'\\nwrong root'))
+            self.assertFalse(policy.allows(one,'RUN PowerShell in '+str(one)+'\\nmkdir foo'))
+            policy.set_mode(one,'ask')
+            self.assertFalse(policy.allows(one,desc))
+
+    def test_persistent_always_can_be_revoked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            one=root/'workspace';one.mkdir()
+            store=root/'policy.json'
+            policy=ApprovalPolicy(store)
+            policy.set_mode(one,'always_all')
+            restored=ApprovalPolicy(store)
+            command='RUN PowerShell in '+str(one)+'\\nmkdir test'
+            self.assertTrue(restored.allows(one,command))
+            restored.set_mode(one,'ask')
+            self.assertFalse(ApprovalPolicy(store).allows(one,command))
+
+    def test_read_outside_never_auto_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            policy=ApprovalPolicy(root/'policy.json')
+            policy.set_mode(root,'always_all')
+            self.assertFalse(policy.allows(root,'Read outside projects: '+str(root.parent/'secret.txt')))
+
+    def test_allow_once_does_not_persist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            policy=ApprovalPolicy(root/'policy.json')
+            policy.grant(root,'WRITE '+str(root/'hello.py')+'\\nhello','once')
+            self.assertEqual(policy.mode(root),'ask')
 
 class AgentApprovalTests(unittest.TestCase):
     def test_declined_write_keeps_files_unchanged(self):
