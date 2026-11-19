@@ -514,10 +514,19 @@ class App:
             self.speaker.stop();self.speech_id+=1;self.speech_in_progress=False
             self.root.after(500,self.maybe_listen)
 
+    @staticmethod
+    def spoken_prose(text):
+        """Convert response to speech without truncating its explanation."""
+        # Never read full code blocks aloud; they remain available in chat.
+        cleaned=re.sub(r'```[\\s\\S]*?```', ' Code example is available in chat. ', text)
+        cleaned=re.sub(r'(?m)^#{1,6}\\s+', '', cleaned)
+        cleaned=re.sub(r'[*_`]', '', cleaned)
+        return cleaned.strip()
+
     def stream_speech(self,text,final=False):
-        if final:self.last_spoken_reply=text
+        if final:self.last_spoken_reply=self.spoken_prose(text)
         if not self.conversation or not self.speak_enabled.get():return False
-        safe=text.split('```')[0][:700]
+        safe=self.spoken_prose(text)
         if final:
             if self.speech_stream_queue is None:return False
             remainder=safe[self.speech_stream_cursor:].strip()
@@ -548,9 +557,9 @@ class App:
         return True
 
     def speak(self,text):
-        self.last_spoken_reply=text
-        # Read short prose only. Keep generated code and long output on screen.
-        spoken=text.split('```')[0].strip()[:700]
+        # Read the explanatory prose rather than an arbitrary 700-character cutoff.
+        spoken=self.spoken_prose(text)
+        self.last_spoken_reply=spoken
         if not spoken: return
         self.speech_id+=1;identifier=self.speech_id
         self.speech_in_progress=True;self.expression('speaking')
