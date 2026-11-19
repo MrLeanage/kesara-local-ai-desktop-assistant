@@ -18,10 +18,14 @@ class CompanionHome:
         self.window.protocol('WM_DELETE_WINDOW',app.close)
         self.window.configure(bg=BG)
         self.window.attributes('-topmost',True)
-        self.window.geometry('330x195+70+70')
+        self.window.geometry('330x242+70+70')
         self.window.resizable(True,False)
         self.avatar=WaveIndicator(self.window,width=300,height=98,bg=BG)
         self.avatar.pack(fill='x',padx=10,pady=(8,2))
+        self.phase=tk.StringVar(value='Initializing voice recognition...')
+        self.detail=tk.StringVar(value='You can open chat while setup runs.')
+        tk.Label(self.window,textvariable=self.phase,bg=BG,fg=TEXT,font=('Segoe UI',10,'bold')).pack(pady=(0,2))
+        tk.Label(self.window,textvariable=self.detail,bg=BG,fg=MUTED,font=('Segoe UI',8),wraplength=290).pack(pady=(0,5))
         self.talk=app.button(self.window,'Start talking',self.primary,accent=True)
         self.talk.pack(fill='x',padx=14,pady=3)
         self.more=app.button(self.window,'Open chat / options',self.show_menu)
@@ -64,7 +68,32 @@ class CompanionHome:
         if not app.alive:return
         self.avatar.set_state(app.avatar.mode)
         self.avatar.set_level(app.avatar.level)
-        ready=app.voice_ready and app.model_ready
+        # The floating voice window must work without opening the chat workspace.
+        # Whisper readiness is sufficient to begin; Ollama may load on first turn.
+        ready=app.voice_ready
         self.talk.configure(state='normal' if ready or app.busy or app.conversation else 'disabled')
-        self.talk.configure(text='Stop' if app.busy else ('End conversation' if app.conversation else 'Start talking'))
+        self.talk.configure(text='Stop task' if app.busy else ('End voice chat' if app.conversation else 'Start voice chat'))
+        if app.pending:
+            phase='Approval needed'
+            detail='Review the proposed code or command in the approval window.'
+        elif app.listening:
+            phase='Listening' if app.mic_button.cget('text')!='Transcribing...' else 'Transcribing'
+            detail='Speak naturally, then pause. No Send button needed.'
+        elif app.speech_in_progress:
+            phase='Speaking'
+            detail='I will listen again after replying.'
+        elif app.busy:
+            phase='Thinking'
+            detail='Preparing an answer or working on your request.'
+        elif app.conversation:
+            phase='Voice chat active'
+            detail='Preparing to listen again.'
+        elif ready:
+            phase='Ready to talk'
+            detail='Press Start voice chat once; keep this window open.'
+        else:
+            phase='Voice unavailable' if app.mic_button.cget('text')=='Voice unavailable' else 'Preparing voice'
+            detail='Open chat to see setup details, or use text chat.'
+        self.phase.set(phase)
+        self.detail.set(detail)
         self.window.after(100,self.update)
