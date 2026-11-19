@@ -5,6 +5,7 @@ Model tool-message state is intentionally not reconstructed from UI transcripts.
 """
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 class ChatHistory:
@@ -31,10 +32,15 @@ class ChatHistory:
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id,id);
             """)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(str(self.path), timeout=10)
-        db.execute('PRAGMA foreign_keys=ON')
-        return db
+        try:
+            db.execute('PRAGMA foreign_keys=ON')
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def create(self, project_path=''):
         with self.lock, self._connect() as db:
