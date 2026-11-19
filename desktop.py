@@ -35,6 +35,7 @@ class App:
         self.model_error=None
         self.conversation=False
         self.pending_voice_send=False
+        self.review_voice_pending=False
         self.last_voice_transcript=''
         self.last_voice_transcript_at=0.0
         self.last_spoken_reply=''
@@ -293,7 +294,7 @@ class App:
         else:self.maybe_listen()
 
     def end_conversation(self):
-        self.conversation=False;self.pending_voice_send=False
+        self.conversation=False;self.pending_voice_send=False;self.review_voice_pending=False
         self.conversation_button.configure(text='Start conversation')
         self.mic_stop.set();self.speaker.stop();self.speech_id+=1;self.speech_in_progress=False
         self.expression('thinking' if self.busy else 'idle')
@@ -302,7 +303,7 @@ class App:
         self.status.set('Conversation ended. Name activation remains on.' if self.hands_free else 'Conversation ended. Microphone off; any running task can be stopped with Stop.')
 
     def maybe_listen(self):
-        if self.alive and self.conversation and self.voice_ready and not self.busy and not self.listening and not self.speech_in_progress and self.pending is None:
+        if self.alive and self.conversation and not self.review_voice_pending and self.voice_ready and not self.busy and not self.listening and not self.speech_in_progress and self.pending is None:
             self.toggle_mic()
 
     def stream_reply(self,text):
@@ -349,6 +350,7 @@ class App:
         text=self.composer.get('1.0','end').strip()
         if not text: return 'break'
         diagnostic('request_submitted',characters=len(text),conversation=self.conversation)
+        self.review_voice_pending=False
         self.composer.delete('1.0','end')
         self.append('You',text,'you')
         # Keep the actual selected folder visible alongside the user's request.
@@ -485,12 +487,15 @@ class App:
                                   state='readonly',width=52)
         model_choice.current(1 if voice_options.get('speech_model')=='medium.en' else 0)
         model_choice.pack(anchor='w',padx=20)
+        review_value=tk.BooleanVar(value=bool(voice_options.get('review_transcripts',False)))
+        tk.Checkbutton(window,text='Review spoken text before sending (safer for coding tasks)',variable=review_value,
+                       bg=BG,fg=TEXT,selectcolor=CARD,activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(9,0))
         tk.Label(window,text='Medium is free but needs a larger download and more CPU/RAM. Restart Kesara after changing.',
                  bg=BG,fg=MUTED,wraplength=550).pack(anchor='w',padx=20)
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
-            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en')
+            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en',review_transcripts=review_value.get())
             VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
             window.destroy(); self.status.set('Voice settings saved. Restart Kesara to load the selected speech model.')
         self.button(window,'Save voice settings',save,accent=True).pack(anchor='e',padx=20,pady=20)
@@ -690,7 +695,14 @@ class App:
                             self.end_conversation();continue
                         existing=self.composer.get('1.0','end').strip()
                         self.composer.insert('end',(' ' if existing else '')+value)
-                        if self.conversation:self.pending_voice_send=True
+                        if self.conversation and not self.review_voice_pending:
+                            try:review_enabled=bool(json.loads(VOICE_SETTINGS.read_text(encoding='utf-8')).get('review_transcripts',False))
+                            except (OSError,ValueError):review_enabled=False
+                            if review_enabled:
+                                self.review_voice_pending=True
+                                self.status.set('Review the transcript in chat, correct it if needed, then press Send.')
+                                self.root.deiconify();self.root.lift()
+                            else:self.pending_voice_send=True
                         else:self.status.set('Check your message, then Send.')
                 elif kind=='voice_error':
                     if self.conversation:self.end_conversation()
@@ -707,6 +719,8 @@ class App:
                         self.new_button.configure(state='disabled');self.folder_button.configure(state='disabled')
                         if self.pending_voice_send:
                             self.pending_voice_send=False;self.send()
+                        elif self.review_voice_pending:
+                            self.status.set('Transcript ready to review. Correct the text and press Send.')
                         else:self.root.after(500,self.maybe_listen)
                 elif kind=='speech_done':
                     if value==self.speech_id:
