@@ -464,7 +464,7 @@ class App:
         tk.Label(window,text='Talk interrupts a spoken reply.\nSend changes to Stop while a task is running.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
 
     def voice_settings(self):
-        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('650x760'); window.configure(bg=BG)
+        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('680x830'); window.configure(bg=BG)
         tk.Label(window,text='Offline voice',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,10))
         tk.Label(window,text='English voice · Windows default speaking voice\nTalk starts a conversation.\nMore offers optional name activation and camera gestures.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,15))
         try: devices=microphones()
@@ -483,7 +483,14 @@ class App:
         try:voice_options=json.loads(VOICE_SETTINGS.read_text(encoding='utf-8'))
         except (OSError,ValueError):voice_options={}
         speed.current(0 if voice_options.get('recognition_mode')=='balanced' else 1);speed.pack(anchor='w',padx=20)
-        tk.Label(window,text='Offline speech model',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(12,4))
+        tk.Label(window,text='Offline speech engine',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(12,4))
+        engine_choice=ttk.Combobox(window,values=['Whisper (existing)','NVIDIA Parakeet V3 (free, local CPU)'],
+                                   state='readonly',width=52)
+        engine_choice.current(1 if voice_options.get('speech_engine')=='parakeet' else 0)
+        engine_choice.pack(anchor='w',padx=20)
+        tk.Label(window,text='Parakeet uses the optional sherpa-onnx package and downloads its model on first launch.',
+                 bg=BG,fg=MUTED,wraplength=600).pack(anchor='w',padx=20)
+        tk.Label(window,text='Whisper model (used when Whisper is selected)',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(12,4))
         model_choice=ttk.Combobox(window,values=['Small English (fast, less accurate)','Medium English (more accurate, slower CPU)'],
                                   state='readonly',width=52)
         model_choice.current(1 if voice_options.get('speech_model')=='medium.en' else 0)
@@ -504,7 +511,7 @@ class App:
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
-            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en',review_transcripts=review_value.get())
+            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en',speech_engine='parakeet' if engine_choice.current()==1 else 'whisper',review_transcripts=review_value.get())
             voice_options['speech_corrections']=format_corrections(parse_corrections(corrections.get('1.0','end')))
             VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
             window.destroy(); self.status.set('Voice settings saved. Restart Kesara to load the selected speech model.')
