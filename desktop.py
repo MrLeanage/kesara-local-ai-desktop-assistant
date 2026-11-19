@@ -463,7 +463,7 @@ class App:
         tk.Label(window,text='Talk interrupts a spoken reply.\nSend changes to Stop while a task is running.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
 
     def voice_settings(self):
-        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('590x500'); window.configure(bg=BG)
+        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('590x610'); window.configure(bg=BG)
         tk.Label(window,text='Offline voice',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,10))
         tk.Label(window,text='English voice · Windows default speaking voice\nTalk starts a conversation.\nMore offers optional name activation and camera gestures.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,15))
         try: devices=microphones()
