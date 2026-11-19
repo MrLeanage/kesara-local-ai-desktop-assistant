@@ -1,5 +1,6 @@
 """Core smoke tests, runnable without Ollama, Windows audio or Tk display."""
 import tempfile
+import json
 import unittest
 from pathlib import Path
 from history import ChatHistory
