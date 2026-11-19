@@ -279,7 +279,7 @@ class App:
         self.conversation=True;self.speak_enabled.set(True)
         self.conversation_button.configure(text='End conversation')
         self.folder_button.configure(state='disabled');self.new_button.configure(state='disabled')
-        self.append('Conversation mode','Hands-free voice started from the floating panel or workspace. Speak naturally and pause; Kesara submits your words automatically, responds aloud, then listens again. Stop ends the loop. File changes still require approval.','system')
+        self.append('Conversation mode','Hands-free conversation. Selected project: '+str(self.cwd)+'\nSpeak naturally and pause; Kesara sends the transcript automatically and listens again after replying. For project analysis, say "analyze the selected project." Stop ends the loop. File changes still require approval.','system')
         if initial_message:
             self.composer.insert('1.0',initial_message);self.send()
         elif acknowledge:
@@ -346,6 +346,8 @@ class App:
         diagnostic('request_submitted',characters=len(text),conversation=self.conversation)
         self.composer.delete('1.0','end')
         self.append('You',text,'you')
+        # Keep the actual selected folder visible alongside the user's request.
+        self.status.set('Working in project: '+str(self.cwd))
         if text.startswith('/remember '):
             memory=json.loads(core.MEMORY.read_text(encoding='utf-8')) if core.MEMORY.exists() else []
             memory.append(text[10:]); core.MEMORY.write_text(json.dumps(memory,indent=2),encoding='utf-8')
@@ -412,7 +414,8 @@ class App:
         if self.busy: self.status.set('Stopping after the current model request or running command finishes...')
 
     def choose_folder(self):
-        if self.busy or self.listening: return
+        if self.busy or self.listening or self.conversation:
+            self.status.set('End voice chat before switching project folders.');return
         selected=filedialog.askdirectory(initialdir=str(self.cwd),title='Choose Kesara project folder')
         if selected:
             self.cwd=Path(selected).resolve(); self.folder_text.set(str(self.cwd)); self.messages=[]
