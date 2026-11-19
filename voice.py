@@ -80,23 +80,51 @@ def microphones():
     import sounddevice as sd
     return [(i,d['name']) for i,d in enumerate(sd.query_devices()) if d['max_input_channels']>0]
 
+def voice_options():
+    try:
+        data=json.loads(SETTINGS.read_text(encoding='utf-8'))
+        return data if isinstance(data,dict) else {}
+    except (OSError,ValueError):
+        return {}
+
 def recognition_names():
-    try: values=json.loads(SETTINGS.read_text(encoding='utf-8')).get('recognition_names',[])
-    except (OSError,ValueError):values=['Kesara']
+    values=voice_options().get('recognition_names',['Kesara'])
     if not isinstance(values,list):values=['Kesara']
     return [v.strip()[:60] for v in values[:30] if isinstance(v,str) and v.strip()]
+
+def preferred_microphone(devices=None):
+    """Resolve a saved device by name; PortAudio indices can change on reboot."""
+    saved=voice_options().get('microphone_name')
+    if not saved:
+        return None
+    devices=devices if devices is not None else microphones()
+    for index,name in devices:
+        if name==saved:
+            return index
+    return None
+
+def recognition_options(settings=None, names=None):
+    """Neutral prompt avoids biasing Whisper toward invented technical words."""
+    settings=settings if settings is not None else voice_options()
+    names=names if names is not None else recognition_names()
+    beam=2 if settings.get('recognition_mode')=='balanced' else 5
+    options=dict(language='en',beam_size=beam,temperature=0,
+                 condition_on_previous_text=False,
+                 vad_filter=True,
+                 vad_parameters={'threshold':0.42,'min_silence_duration_ms':600},
+                 hallucination_silence_threshold=2)
+    # Only user-provided vocabulary as hints; do not prime complete sentences.
+    if names:
+        options['initial_prompt']='Proper names: '+', '.join(names)+'.'
+    return options
 
 def transcribe_audio(data,rate):
     import numpy as np
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
     if rate!=16000:
         waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,np.arange(len(waveform)),waveform).astype(np.float32)
-    names=recognition_names()
-    prompt='Technical software engineering conversation. Project, source code, architecture, Python, Java, Spring Boot, Flutter, Windows file paths. Names and vocabulary: '+', '.join(names)+'.'
-    try: settings=json.loads(SETTINGS.read_text(encoding='utf-8'))
-    except (OSError,ValueError):settings={}
-    beam=2 if settings.get('recognition_mode')=='balanced' else 5
-    options=dict(language='en',beam_size=beam,temperature=0,condition_on_previous_text=False,vad_filter=True,vad_parameters={'threshold':0.35,'min_silence_duration_ms':500},initial_prompt=prompt,hallucination_silence_threshold=2)
+    options=recognition_options()
+    beam=options['beam_size']
     segments,_=load_model().transcribe(waveform,**options)
     segments=list(segments)
     if beam<5 and segments and min(segment.avg_logprob for segment in segments)<-1.0:
