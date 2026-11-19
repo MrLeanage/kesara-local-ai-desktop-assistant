@@ -103,6 +103,10 @@ def transcribe_audio(data,rate):
         options['beam_size']=5;segments=list(load_model().transcribe(waveform,**options)[0])
     # Whisper can hallucinate plausible phrases during noise or silence.
     # Filter low-confidence segments before routing any words to the agent.
+    return filter_transcript_segments(segments)
+
+def filter_transcript_segments(segments):
+    """Return only credible recognized speech; never manufacture text."""
     accepted=[segment.text.strip() for segment in segments if
               segment.text.strip() and
               segment.avg_logprob >= -0.85 and
