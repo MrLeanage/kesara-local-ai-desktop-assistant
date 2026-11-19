@@ -134,10 +134,12 @@ OpenRouter** with a standard-library router (`model_router.py`).
 4. Check **explicit cloud context-sharing consent**. Kesara displays a second
    confirmation explaining that conversation, code and tool results may be
    sent to the chosen cloud provider. Leave it disabled for private/offline work.
-5. Optionally enable fallback to local Ollama when your chosen cloud provider
-   has an HTTP 429/5xx or a temporary network outage. Authentication errors
-   and invalid model output never silently fall back. It does not pick another
-   cloud service without your explicit selection.
+5. Optionally enable a **secondary provider**, explicitly selecting Ollama,
+   Gemini, Groq or OpenRouter. Kesara retries the selected secondary only
+   after an HTTP 429/5xx or temporary network error. Authentication errors
+   and invalid model output never silently fall back. A selected secondary
+   cloud provider can receive source context only after you enable cloud
+   consent and explicitly choose that provider.
 6. Cloud responses must contain an agent JSON action; invalid action output
    is rejected before any filesystem or shell command executes.
 
@@ -148,7 +150,7 @@ API account and the selected model. Kesara cannot guarantee that those
 provider requests are free if you enable billing. Check the official free
 allowances and billing before enabling cloud. Models may change availability.
 
-This is a **provider-selection and fallback MVP**, not yet an autonomous
+This is a **multi-provider selection and explicit secondary fallback MVP**, not yet an autonomous
 quality-based router with model benchmarking, distributed planning, or review
 consensus. Cloud inference has not been integration-tested using your personal
 API credentials. The CI suite uses simulated network responses only.
