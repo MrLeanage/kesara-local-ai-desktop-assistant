@@ -38,6 +38,10 @@ MODEL_CHOICES={
 }
 _loaded_model_key=None
 
+def chosen_speech_engine():
+    engine=voice_options().get('speech_engine','whisper')
+    return engine if engine in ('whisper','parakeet') else 'whisper'
+
 def chosen_speech_model():
     key=voice_options().get('speech_model','small.en')
     return key if key in MODEL_CHOICES else 'small.en'
@@ -48,7 +52,10 @@ def missing_model_files(model_key=None):
     return [name for name in REQUIRED_MODEL_FILES if not (folder/name).is_file()]
 
 def ensure_speech_model(on_status=None):
-    """Install selected free Whisper model on first use, retaining existing models."""
+    """Install only the selected offline speech engine; no paid cloud API."""
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import ensure_model
+        return ensure_model(on_status)
     key=chosen_speech_model()
     repository,folder=MODEL_CHOICES[key]
     missing=missing_model_files(key)
@@ -71,6 +78,9 @@ def ensure_speech_model(on_status=None):
 
 def load_model():
     global _model,_loaded_model_key
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import load_recognizer
+        return load_recognizer()
     key=chosen_speech_model()
     with _lock:
         if _model is None or _loaded_model_key!=key:
@@ -131,6 +141,10 @@ def transcribe_audio(data,rate):
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
     if rate!=16000:
         waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,np.arange(len(waveform)),waveform).astype(np.float32)
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import transcribe
+        transcript=transcribe(waveform)
+        return apply_corrections(transcript,parse_corrections(voice_options().get('speech_corrections','')))
     options=recognition_options()
     beam=options['beam_size']
     segments,_=load_model().transcribe(waveform,**options)
@@ -229,7 +243,7 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
     started=time.monotonic()
     if seconds>=0.65 and contains_real_speech(b''.join(chunks),rate):
         text=transcribe_audio(b''.join(chunks),rate)
-    diagnostic('recording_finished',engine=chosen_speech_model(),blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
+    diagnostic('recording_finished',engine=chosen_speech_engine() if chosen_speech_engine()=='parakeet' else chosen_speech_model(),blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
     if not text:
         if seconds<2:
             emit('no_speech',f'Only {seconds:.1f} seconds of audio captured. Click Talk, wait for Listening, speak a full sentence, then click Done.')
