@@ -6,6 +6,7 @@ from history import ChatHistory
 import kesara
 import voice
 from unittest.mock import patch, Mock
+from desktop import App
 from types import SimpleNamespace
 
 class HistoryTests(unittest.TestCase):
@@ -54,6 +55,27 @@ class AgentApprovalTests(unittest.TestCase):
             self.assertIn('declined',response.lower())
             self.assertFalse(marker.exists())
 
+
+class FloatingVoiceTests(unittest.TestCase):
+    def test_voice_session_can_start_without_model_warmup_or_workspace(self):
+        app=App.__new__(App)
+        app.conversation=False
+        app.voice_ready=True
+        app.model_ready=False  # Ollama may warm on its first real request.
+        app.busy=False
+        app.listening=False
+        app.preserve_draft=Mock()
+        app.speak_enabled=Mock()
+        app.conversation_button=Mock()
+        app.folder_button=Mock()
+        app.new_button=Mock()
+        app.append=Mock()
+        app.maybe_listen=Mock()
+        app.toggle_conversation()
+        self.assertTrue(app.conversation)
+        app.maybe_listen.assert_called_once_with()
+        app.append.assert_called_once()
+        app.speak_enabled.set.assert_called_once_with(True)
 
 class SpeechBootstrapTests(unittest.TestCase):
     def test_existing_files_do_not_trigger_network_download(self):
