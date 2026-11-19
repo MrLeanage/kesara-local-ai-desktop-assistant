@@ -108,10 +108,17 @@ class SpeechBootstrapTests(unittest.TestCase):
 
     def test_failed_download_reports_error(self):
         with tempfile.TemporaryDirectory() as temp:
-            with patch.object(voice,'MODEL_PATH',Path(temp)):
-                with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=Mock(side_effect=OSError('offline')))}):
-                    with self.assertRaisesRegex(RuntimeError,'Unable to download'):
-                        voice.ensure_speech_model()
+            folder=Path(temp)
+            # Never consult an installed Whisper model. Simulate an absent model
+            # irrespective of the user's saved speech-model preference.
+            with patch.object(voice,'MODEL_CHOICES',{'small.en':(voice.MODEL_REPOSITORY,folder),
+                                                    'medium.en':('Systran/faster-whisper-medium.en',folder)}):
+                with patch.object(voice,'chosen_speech_model',return_value='small.en'):
+                    downloader=Mock(side_effect=OSError('offline'))
+                    with patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=downloader)}):
+                        with self.assertRaisesRegex(RuntimeError,'Unable to download'):
+                            voice.ensure_speech_model()
+                        downloader.assert_called_once()
 
 
 class SelectedProjectTests(unittest.TestCase):
