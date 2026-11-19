@@ -480,12 +480,19 @@ class App:
         try:voice_options=json.loads(VOICE_SETTINGS.read_text(encoding='utf-8'))
         except (OSError,ValueError):voice_options={}
         speed.current(0 if voice_options.get('recognition_mode')=='balanced' else 1);speed.pack(anchor='w',padx=20)
+        tk.Label(window,text='Offline speech model',bg=BG,fg=TEXT).pack(anchor='w',padx=20,pady=(12,4))
+        model_choice=ttk.Combobox(window,values=['Small English (fast, less accurate)','Medium English (more accurate, slower CPU)'],
+                                  state='readonly',width=52)
+        model_choice.current(1 if voice_options.get('speech_model')=='medium.en' else 0)
+        model_choice.pack(anchor='w',padx=20)
+        tk.Label(window,text='Medium is free but needs a larger download and more CPU/RAM. Restart Kesara after changing.',
+                 bg=BG,fg=MUTED,wraplength=550).pack(anchor='w',padx=20)
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
-            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None)
+            voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en')
             VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
-            window.destroy(); self.status.set('Microphone and recognition hints saved')
+            window.destroy(); self.status.set('Voice settings saved. Restart Kesara to load the selected speech model.')
         self.button(window,'Save voice settings',save,accent=True).pack(anchor='e',padx=20,pady=20)
 
     def toggle_mic(self):
