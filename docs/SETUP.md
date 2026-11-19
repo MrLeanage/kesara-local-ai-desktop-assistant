@@ -47,3 +47,46 @@ After Python dependencies are installed, the desktop starts an asynchronous star
 The status line displays download/loading progress (not a byte-accurate progress meter). Voice remains unavailable until the model loads; **text chat remains available** if the download fails. Internet access and several hundred MB of available disk space are needed for first setup. The startup download contacts Hugging Face; after setup, transcription runs locally. No paid API key is needed.
 
 This automatic setup covers Whisper only. Ollama is still required and its configured `qwen2.5-coder:3b` model must be available on the running server. Optional Vosk name-activation interruption uses its separate Vosk model.
+
+## Optional Parakeet V3 speech recognition (free / local, Kesara 2.0)
+
+Kesara can now use the NVIDIA Parakeet TDT 0.6B v3 INT8 model via the Python
+`sherpa-onnx` CPU runtime. This runs speech recognition fully offline after
+the initial model download and does **not** require CUDA, cloud inference,
+or a paid API. Existing Whisper Small/Medium remains selectable.
+
+1. In PowerShell from your Kesara test checkout, install the **optional**
+   Parakeet Python runtime once:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -r requirements-parakeet.txt
+   .\.venv\Scripts\python.exe -c "import sherpa_onnx; print('sherpa-onnx ready')"
+   ```
+
+2. Start Kesara normally and open **Chat workspace → Voice settings**.
+   Select **NVIDIA Parakeet V3 (free, local CPU)** in "Offline speech engine".
+   Leave "Review spoken text before sending" **enabled** while evaluating
+   recognition accuracy on real project instructions. Save, then **restart Kesara**.
+3. On the first Parakeet launch, Kesara downloads the official sherpa-onnx
+   model archive (approximately 500 MB), checks its pinned SHA-256, safely
+   extracts the four required model files, and loads the local ONNX recognizer.
+   It requires approximately **2 GB of available disk space**. Download and
+   initialization appear in the chat status line. Future launches reuse the
+   local model, without internet access.
+4. If the model integrity check fails, the source archive may have been
+   republished upstream. Kesara deliberately **does not** execute unverified
+   downloaded model files. Do not bypass the hash check: open an issue so the
+   source and checksum can be reviewed and updated.
+5. To return to Whisper at any time, select **Whisper (existing)**,
+   save, and restart Kesara.
+
+Technical details: model origin:
+https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+The original NVIDIA model is distributed under CC BY 4.0; preserve
+appropriate attribution when redistributing model files.
+
+**Important:** The GitHub CI tests mock speech inference and model archives.
+Live Windows recognition quality, throughput and memory consumption must be
+measured on the laptop. This is an **offline turn-based recognizer**, not
+full-duplex streaming/barge-in audio. Parakeet does not automatically
+validate the user's intended commands; preserve code/tool approvals.
