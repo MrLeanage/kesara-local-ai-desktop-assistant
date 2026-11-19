@@ -112,5 +112,25 @@ class SpeechBootstrapTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError,'Could not download'):
                         voice.ensure_speech_model()
 
+
+class SelectedProjectTests(unittest.TestCase):
+    def test_analyze_uses_actual_folder_without_requesting_path(self):
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)
+            (folder/'pom.xml').write_text('<project/>',encoding='utf-8')
+            outgoing=[]
+            def fake_request(messages,on_partial=None):
+                outgoing.append(messages)
+                return '{"action":"answer","text":"Found Maven project","path":"","content":"","command":""}'
+            events=[]
+            with patch.object(kesara,'request',side_effect=fake_request):
+                kesara.run_turn('Analyze this project',[],folder,
+                                lambda kind,value: events.append((kind,value)),
+                                lambda desc:False,threading.Event())
+            self.assertTrue(any('pom.xml' in str(value) for kind,value in events if kind=='tool'))
+            self.assertIn(str(folder),str(outgoing[0]))
+            self.assertTrue(any(kind=='answer' for kind,_ in events))
+
 if __name__=='__main__':
     unittest.main()
