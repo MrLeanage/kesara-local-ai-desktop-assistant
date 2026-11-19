@@ -225,7 +225,7 @@ def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
         except (OSError,ValueError) as exc:
             emit('answer','Could not inspect '+str(inspected)+': '+str(exc))
             return
-        emit('tool','Inspected project '+snapshot['root']+'; sampled '+str(len(snapshot['sampled']))+' files.')
+        emit('tool','Inspected project '+snapshot['root']+'; sampled '+str(len(snapshot['sampled']))+' files.\nKey files:\n'+'\n'.join(snapshot['files'][:35]))
         if not snapshot['sampled']:
             emit('answer',summary_fallback(snapshot))
             return
