@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 import kesara as core
 from waveform import WaveIndicator
 from history import ChatHistory
+from speech_corrections import parse_corrections, format_corrections
 from interaction import Ambient, Camera, command as voice_command
 from voice import Speaker, microphones, preferred_microphone, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
@@ -463,7 +464,7 @@ class App:
         tk.Label(window,text='Talk interrupts a spoken reply.\nSend changes to Stop while a task is running.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
 
     def voice_settings(self):
-        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('590x610'); window.configure(bg=BG)
+        window=tk.Toplevel(self.root); window.title('Kesara — Voice settings'); window.geometry('650x760'); window.configure(bg=BG)
         tk.Label(window,text='Offline voice',bg=BG,fg=TEXT,font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(20,10))
         tk.Label(window,text='English voice · Windows default speaking voice\nTalk starts a conversation.\nMore offers optional name activation and camera gestures.',bg=BG,fg=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,15))
         try: devices=microphones()
@@ -491,11 +492,20 @@ class App:
         tk.Checkbutton(window,text='Review spoken text before sending (safer for coding tasks)',variable=review_value,
                        bg=BG,fg=TEXT,selectcolor=CARD,activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(9,0))
         tk.Label(window,text='Medium is free but needs a larger download and more CPU/RAM. Restart Kesara after changing.',
-                 bg=BG,fg=MUTED,wraplength=550).pack(anchor='w',padx=20)
+                 bg=BG,fg=MUTED,wraplength=600).pack(anchor='w',padx=20)
+        tk.Label(window,text='Correct frequently misheard names or technical terms',
+                 bg=BG,fg=TEXT,font=('Segoe UI',10,'bold')).pack(anchor='w',padx=20,pady=(15,4))
+        tk.Label(window,text='One correction per line: what Kesara heard => what you actually said. Local only.',
+                 bg=BG,fg=MUTED,wraplength=600).pack(anchor='w',padx=20,pady=(0,5))
+        corrections=tk.Text(window,height=5,bg=CARD,fg=TEXT,insertbackground=TEXT,relief='flat',
+                            font=('Consolas',10),wrap='word')
+        corrections.pack(fill='x',padx=20)
+        corrections.insert('1.0',voice_options.get('speech_corrections',''))
         def save():
             n=choice.current(); self.device=None if n==0 else devices[n-1][0]
             values=[value.strip()[:60] for value in names.get().split(',') if value.strip()][:30]
             voice_options.update(recognition_names=values,recognition_mode='accurate' if speed.current()==1 else 'balanced',microphone_name=devices[n-1][1] if n>0 else None,speech_model='medium.en' if model_choice.current()==1 else 'small.en',review_transcripts=review_value.get())
+            voice_options['speech_corrections']=format_corrections(parse_corrections(corrections.get('1.0','end')))
             VOICE_SETTINGS.write_text(json.dumps(voice_options,indent=2),encoding='utf-8')
             window.destroy(); self.status.set('Voice settings saved. Restart Kesara to load the selected speech model.')
         self.button(window,'Save voice settings',save,accent=True).pack(anchor='e',padx=20,pady=20)
