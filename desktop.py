@@ -12,6 +12,7 @@ import kesara as core
 from waveform import WaveIndicator
 from history import ChatHistory
 from speech_corrections import parse_corrections, format_corrections
+from voice_safety import requires_voice_review
 from interaction import Ambient, Camera, command as voice_command
 from voice import Speaker, microphones, preferred_microphone, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
@@ -764,9 +765,9 @@ class App:
                         if self.conversation and not self.review_voice_pending:
                             try:review_enabled=bool(json.loads(VOICE_SETTINGS.read_text(encoding='utf-8')).get('review_transcripts',False))
                             except (OSError,ValueError):review_enabled=False
-                            if review_enabled:
+                            if review_enabled or requires_voice_review(value):
                                 self.review_voice_pending=True
-                                self.status.set('Review the transcript in chat, correct it if needed, then press Send.')
+                                self.status.set('Voice command needs confirmation. Correct the transcript and press Send; no file action has run.')
                                 self.root.deiconify();self.root.lift()
                             else:self.pending_voice_send=True
                         else:self.status.set('Check your message, then Send.')
