@@ -34,8 +34,10 @@ class TurnDetector:
                 self.reason='turn_timeout'
                 return self.reason
             if (self.last_speech is not None and
-                    seconds-self.last_speech>=self.silence_seconds and
-                    self.last_speech-self.first_speech>=self.min_speech_seconds):
+                    seconds-self.last_speech>=self.silence_seconds):
+                # A brief greeting still constitutes a complete turn.
+                # Minimum speech duration is already enforced by Silero VAD
+                # before last_speech_end returns a timestamp.
                 self.reason='speech_finished'
                 return self.reason
         elif seconds>=self.max_wait_seconds:
