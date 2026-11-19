@@ -541,7 +541,7 @@ class App:
             self.status.set('Finish the current task before switching AI models.');return
         config=model_router.configuration()
         window=tk.Toplevel(self.root);window.title('Kesara — AI engines')
-        window.geometry('710x690');window.configure(bg=BG)
+        window.geometry('710x745');window.configure(bg=BG)
         tk.Label(window,text='AI engines · Local + Cloud',bg=BG,fg=TEXT,
                  font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(16,8))
         tk.Label(window,text='Choose one engine for coding. Cloud usage is opt-in and sends prompts, chat and project source context to that provider.',
@@ -561,9 +561,12 @@ class App:
         tk.Checkbutton(window,text='I consent to sending project context to configured cloud AI providers',
                       variable=consent,bg=BG,fg=TEXT,selectcolor=CARD,
                       activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(8,2))
-        tk.Checkbutton(window,text='Fallback to local Ollama only when the cloud provider is temporarily unavailable',
+        tk.Checkbutton(window,text='Use a secondary provider on rate limit / temporary network failure',
                       variable=fallback,bg=BG,fg=TEXT,selectcolor=CARD,
-                      activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(0,8))
+                      activebackground=BG,activeforeground=TEXT).pack(anchor='w',padx=20,pady=(0,4))
+        secondary=ttk.Combobox(window,values=options,state='readonly',width=35)
+        secondary.set(config.get('fallback_provider','ollama'))
+        secondary.pack(anchor='w',padx=20,pady=(0,8))
         tk.Label(window,text='API keys are read from GEMINI_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY in Windows.\\n'
                  'OpenRouter: only :free models or openrouter/free. No automatic paid-model selection.\\n'
                  'Other providers may bill depending on your account; check free-tier eligibility before enabling.',
@@ -576,9 +579,9 @@ class App:
             if chosen!='ollama':
                 confirmed=messagebox.askyesno('Send project source to cloud?',
                     'Kesara may send prompts, source files and tool results to '+chosen+
-                    '. Free quotas and provider data-use rules vary. Continue?',parent=window)
+                    '. Your configured secondary provider may also receive source context if fallback is enabled. Free quotas and provider data-use rules vary. Continue?',parent=window)
                 if not confirmed:return
-            config.update(provider=chosen,cloud_consent=consent.get(),fallback=fallback.get(),
+            config.update(provider=chosen,cloud_consent=consent.get(),fallback=fallback.get(),fallback_provider=secondary.get(),
                           models={key:entry.get().strip() for key,entry in entries.items()})
             try:model_router.save_configuration(config)
             except ValueError as exc:
