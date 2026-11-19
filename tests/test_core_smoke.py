@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from history import ChatHistory
 import kesara
+import voice
+from unittest.mock import patch
 
 class HistoryTests(unittest.TestCase):
     def test_persistent_conversations_and_project_association(self):
@@ -50,6 +52,40 @@ class AgentApprovalTests(unittest.TestCase):
                                     folder,confirm=lambda message: False)
             self.assertIn('declined',response.lower())
             self.assertFalse(marker.exists())
+
+
+class SpeechBootstrapTests(unittest.TestCase):
+    def test_existing_files_do_not_trigger_network_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)
+            for name in voice.REQUIRED_MODEL_FILES:
+                (folder/name).write_bytes(b'dummy')
+            with patch.object(voice,'MODEL_PATH',folder):
+                with patch('huggingface_hub.snapshot_download') as download:
+                    self.assertFalse(voice.ensure_speech_model())
+                    download.assert_not_called()
+
+    def test_missing_files_download_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)
+            events=[]
+            def fake_download(**kwargs):
+                self.assertEqual(kwargs['repo_id'],voice.MODEL_REPOSITORY)
+                for name in voice.REQUIRED_MODEL_FILES:
+                    (folder/name).write_bytes(b'dummy')
+            with patch.object(voice,'MODEL_PATH',folder):
+                with patch('huggingface_hub.snapshot_download',side_effect=fake_download) as download:
+                    self.assertTrue(voice.ensure_speech_model(events.append))
+                    self.assertFalse(voice.ensure_speech_model(events.append))
+                    self.assertEqual(download.call_count,1)
+                    self.assertTrue(events)
+
+    def test_failed_download_reports_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(voice,'MODEL_PATH',Path(temp)):
+                with patch('huggingface_hub.snapshot_download',side_effect=OSError('offline')):
+                    with self.assertRaisesRegex(RuntimeError,'Could not download'):
+                        voice.ensure_speech_model()
 
 if __name__=='__main__':
     unittest.main()
