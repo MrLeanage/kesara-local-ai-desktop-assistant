@@ -8,6 +8,7 @@ import datetime
 import re
 import time
 from folder_intent import target_for_request
+import model_router
 
 BASE = Path(__file__).resolve().parent
 PROJECTS = BASE / 'projects'
@@ -24,9 +25,9 @@ def partial_answer(raw):
     try: return json.loads('"'+value+'"')
     except json.JSONDecodeError: return None
 
-def request(messages,on_partial=None):
+def request_ollama(messages,on_partial=None,model=None):
     streaming=on_partial is not None
-    data = json.dumps({'model':MODEL,'messages':messages,'stream':streaming,'format':SCHEMA,'options':{'num_ctx':8192,'num_predict':2048,'temperature':0.1,'num_thread':THREADS},'keep_alive':'1h'}).encode()
+    data = json.dumps({'model':model or MODEL,'messages':messages,'stream':streaming,'format':SCHEMA,'options':{'num_ctx':8192,'num_predict':2048,'temperature':0.1,'num_thread':THREADS},'keep_alive':'1h'}).encode()
     req = urllib.request.Request('http://127.0.0.1:11434/api/chat',data,{'Content-Type':'application/json'})
     started=time.monotonic()
     first_text=None
@@ -49,9 +50,27 @@ def request(messages,on_partial=None):
     with (BASE/'performance.jsonl').open('a',encoding='utf-8') as log:log.write(json.dumps(metrics)+'\n')
     return raw
 
+def request(messages,on_partial=None):
+    """Route structured actions to the selected provider; fail back locally only
+    for retryable provider outages, never for invalid responses or auth errors.
+    """
+    config=model_router.configuration()
+    provider,selected_model=model_router.chosen_model(config)
+    if provider=='ollama':
+        return request_ollama(messages,on_partial,selected_model)
+    try:
+        return model_router.call_cloud(provider,selected_model,messages,config)
+    except model_router.ModelError as exc:
+        if not (config['fallback'] and exc.retryable):
+            raise
+        return request_ollama(messages,on_partial,config['models']['ollama'])
+
 def warm_model(cwd):
+    # Cloud providers require explicit consent and are not warmed at startup.
+    config=model_router.configuration()
+    if config['provider']!='ollama':return
     # Evaluate the shared system prefix once; no generated action is executed.
-    data=json.dumps({'model':MODEL,'messages':[{'role':'system','content':system_prompt(cwd)}],'stream':False,'format':SCHEMA,'options':{'num_ctx':8192,'num_predict':1,'num_thread':THREADS},'keep_alive':'1h'}).encode()
+    data=json.dumps({'model':config['models']['ollama'],'messages':[{'role':'system','content':system_prompt(cwd)}],'stream':False,'format':SCHEMA,'options':{'num_ctx':8192,'num_predict':1,'num_thread':THREADS},'keep_alive':'1h'}).encode()
     req=urllib.request.Request('http://127.0.0.1:11434/api/chat',data,{'Content-Type':'application/json'})
     with urllib.request.urlopen(req,timeout=900) as response:json.loads(response.read())
 
@@ -163,7 +182,8 @@ def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
     for _ in range(12):
         if cancelled.is_set():
             emit('status','Stopped before the next action.'); return
-        emit('status','Thinking locally...')
+        provider,model=model_router.chosen_model()
+        emit('status','Thinking with '+provider+' · '+model+'...')
         raw = request([{'role':'system','content':system}]+messages,on_partial=lambda text:emit('answer_partial',text))
         if cancelled.is_set():
             emit('status','Stopped before executing another action.'); return
