@@ -177,3 +177,30 @@ than claiming success on exceptions.
 
 For copies with short names such as "copy kesara-v2-test to Kesara-2", supply
 full quoted paths. Kesara will not guess relative directories.
+
+## Native coding tools — architecture increment (November 19, 2026)
+
+The existing Python desktop is retained. Flutter desktop migration is deferred.
+
+Choose a repository with **Choose project folder** before using these direct
+chat commands:
+
+- `/map` — read-only repository map: detected manifests, likely entry points,
+  bounded file listing and Git working-tree status
+- `/search <symbol>` — search up to 24 matching source lines in selected
+  project, ignoring virtual environments, generated assets, `.env`, and other
+  common private files
+- `/test` — detects Maven, Gradle, Flutter or a basic Python unittest runner,
+  previews the exact command for approval and returns exit code, actual
+  stdout/stderr and PASS/FAIL. This command **may execute project test code**
+  with your Windows user's permissions. Only run for trusted repositories.
+  Dependencies may be missing and no automatic installation is performed.
+
+These commands do not require Ollama or a cloud model to choose an action.
+The model can also call `project_map`, `search` and `test` natively when
+planning developer work. Shell access and write permissions remain governed
+by existing approval policies; `/test` requires its own approval.
+
+The chat still does not implement a full multi-agent coding workflow, robust
+diff/patch application, a test-and-fix retry policy or unattended self-modification.
+Keep Git branches and human review for consequential code changes.
