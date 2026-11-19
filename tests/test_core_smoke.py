@@ -137,6 +137,12 @@ class MultiModelRoutingTests(unittest.TestCase):
                 model_router.call_cloud('openrouter','openai/gpt-4o',[],config)
             network.assert_not_called()
 
+    def test_cloud_can_return_registered_native_coding_tools(self):
+        for action in ('search','project_map','test'):
+            content=json.dumps({'action':action,'text':'symbol','path':'',
+                                'content':'','command':''})
+            self.assertEqual(json.loads(model_router._decode_action(content))['action'],action)
+
     def test_cloud_output_must_be_valid_tool_action(self):
         with self.assertRaises(model_router.ModelError):
             model_router._decode_action('Sure, I made the file.')
