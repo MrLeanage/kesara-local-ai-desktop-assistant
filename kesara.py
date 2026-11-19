@@ -65,7 +65,7 @@ def approved(description):
 def execute(action, cwd, confirm=None):
     confirm = confirm or approved
     kind = action['action']
-    required = {'read':['path'],'write':['path','content'],'shell':['command']}.get(kind,[])
+    required = {'read':['path'],'mkdir':['path'],'write':['path','content'],'shell':['command']}.get(kind,[])
     if any(key not in action or not isinstance(action[key],str) for key in required):
         raise ValueError('Missing required fields: '+', '.join(required))
     path = resolve(action.get('path','.'),cwd)
@@ -136,6 +136,13 @@ def run_turn(prompt, messages, cwd, emit, confirm, cancelled):
         result=execute({'action':'mkdir','path':str(target)},cwd,confirm=confirm)
         emit('tool',result)
         emit('answer',result)
+        return
+    # If the user explicitly supplied an absolute location for a new folder,
+    # never silently switch to the selected workspace when parsing fails.
+    folder_request=re.search(r'\\b(?:create|make|add)\\s+(?:a\\s+|an\\s+|new\\s+)?(?:folder|directory)\\b',prompt,re.I)
+    explicit_path=re.search(r'[A-Za-z]:[\\\\/]|(?:^|\\s)/[^\\s]+',prompt)
+    if folder_request and explicit_path:
+        emit('answer','I could not determine the exact destination reliably. No folder was created. Please type or select the full parent folder path and the folder name.')
         return
     # Keep the active workspace explicit even when Whisper mishears a path.
     # This is verified application state, not a claim made by the speech model.
