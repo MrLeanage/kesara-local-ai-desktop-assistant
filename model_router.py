@@ -22,7 +22,7 @@ DEFAULT_MODELS={'ollama':'qwen2.5-coder:3b',
 ENDPOINTS={'gemini':'https://generativelanguage.googleapis.com/v1beta/models/',
            'groq':'https://api.groq.com/openai/v1/chat/completions',
            'openrouter':'https://openrouter.ai/api/v1/chat/completions'}
-DEFAULT_SETTINGS={'provider':'ollama','cloud_consent':False,'fallback':False,
+DEFAULT_SETTINGS={'provider':'ollama','cloud_consent':False,'fallback':False,'fallback_provider':'ollama',
                   'free_only':True,'models':DEFAULT_MODELS.copy()}
 class ModelError(RuntimeError):
     def __init__(self,reason,retryable=False):
@@ -34,7 +34,7 @@ def configuration():
     try:
         saved=json.loads(SETTINGS.read_text(encoding='utf-8'))
         if isinstance(saved,dict):
-            for name in ('provider','cloud_consent','fallback','free_only'):
+            for name in ('provider','cloud_consent','fallback','fallback_provider','free_only'):
                 if name in saved:data[name]=saved[name]
             if isinstance(saved.get('models'),dict):
                 for name,model in saved['models'].items():
@@ -43,6 +43,7 @@ def configuration():
     except (OSError,ValueError):
         pass
     if data['provider'] not in PROVIDERS:data['provider']='ollama'
+    if data['fallback_provider'] not in PROVIDERS:data['fallback_provider']='ollama'
     data['cloud_consent']=data['cloud_consent'] is True
     data['fallback']=data['fallback'] is True
     data['free_only']=True # All OpenRouter traffic must use clearly free model IDs
@@ -52,10 +53,12 @@ def save_configuration(config):
     clean={'provider':config.get('provider','ollama'),
            'cloud_consent':config.get('cloud_consent') is True,
            'fallback':config.get('fallback') is True,
+           'fallback_provider':config.get('fallback_provider','ollama'),
            'free_only':True,
            'models':{p:str(config.get('models',{}).get(p,DEFAULT_MODELS[p])).strip()[:128]
                      for p in PROVIDERS}}
     if clean['provider'] not in PROVIDERS:raise ValueError('Unknown model provider')
+    if clean['fallback_provider'] not in PROVIDERS:raise ValueError('Unknown fallback provider')
     if not clean['models']['openrouter'].endswith(':free') and clean['models']['openrouter']!='openrouter/free':
         raise ValueError('Only OpenRouter free models are supported')
     SETTINGS.parent.mkdir(parents=True,exist_ok=True)
@@ -149,5 +152,6 @@ def cloud_candidates(config=None):
     chosen=config['provider']
     result=[chosen]
     if chosen!='ollama' and config['fallback']:
-        result.append('ollama')
+        second=config.get('fallback_provider','ollama')
+        if second!=chosen:result.append(second)
     return result
