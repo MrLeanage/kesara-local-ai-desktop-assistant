@@ -14,6 +14,7 @@ from turn_detection import TurnDetector
 from voice_safety import requires_voice_review
 from approval_policy import ApprovalPolicy
 from folder_intent import explicit_mkdir_request, target_for_request
+from project_inspector import explicitly_requested_project, inspect_project
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -355,6 +356,41 @@ class SpeechBootstrapTests(unittest.TestCase):
                             voice.ensure_speech_model()
                         downloader.assert_called_once()
 
+
+class RepositoryInspectionTests(unittest.TestCase):
+    def test_explicit_project_path_overrides_wrong_workspace(self):
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=root/'projects';workspace.mkdir()
+            actual=root/'Kesara 2.0'/'kesara-v2-test';actual.mkdir(parents=True)
+            (actual/'README.md').write_text('# Kesara Voice Coding Agent\nA local Python assistant.',encoding='utf-8')
+            (actual/'desktop.py').write_text('class DesktopApp: pass',encoding='utf-8')
+            events=[];outgoing=[];approvals=[]
+            prompt=f'Im working on project in this directory {actual} can you give a summary about that project'
+            def fake_request(messages,on_partial=None):
+                outgoing.append(messages)
+                return '{"action":"answer","text":"This project is a Python desktop coding assistant with voice interaction; see README.md and desktop.py for evidence about its interface and features. The available source excerpt shows a DesktopApp class.","path":"","content":"","command":""}'
+            with patch.object(kesara,'request',side_effect=fake_request):
+                kesara.run_turn(prompt,[],workspace,lambda kind,value:events.append((kind,value)),
+                                lambda desc:approvals.append(desc) or True,threading.Event())
+            self.assertEqual(len(approvals),1)
+            self.assertIn(str(actual),approvals[0])
+            self.assertTrue(any('README.md' in str(value) for kind,value in events if kind=='tool'))
+            self.assertTrue(any('DesktopApp' in m['content'] for m in outgoing[0] if m['role']=='user'))
+            self.assertTrue(any('Python desktop' in value for kind,value in events if kind=='answer'))
+
+    def test_repository_inspection_skips_private_and_generated_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'README.md').write_text('The application README.')
+            (root/'.env').write_text('SUPER_SECRET_PASSWORD=testing')
+            (root/'.venv').mkdir()
+            (root/'.venv'/'hidden.py').write_text('private')
+            (root/'main.py').write_text('print("hello")')
+            snapshot=inspect_project(root)
+            self.assertIn('README.md',snapshot['files'])
+            self.assertIn('main.py',snapshot['files'])
+            self.assertNotIn('hidden.py',snapshot['evidence'])
+            self.assertNotIn('SUPER_SECRET_PASSWORD',snapshot['evidence'])
 
 class SelectedProjectTests(unittest.TestCase):
     def test_analyze_uses_actual_folder_without_requesting_path(self):
