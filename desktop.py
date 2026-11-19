@@ -13,6 +13,7 @@ from waveform import WaveIndicator
 from history import ChatHistory
 from speech_corrections import parse_corrections, format_corrections
 from voice_safety import requires_voice_review
+from approval_policy import ApprovalPolicy
 from interaction import Ambient, Camera, command as voice_command
 from voice import Speaker, microphones, preferred_microphone, record, load_model, ensure_speech_model, diagnostic, recognition_names, SETTINGS as VOICE_SETTINGS
 
@@ -29,6 +30,7 @@ class App:
         self.events=queue.Queue()
         self.messages=[]
         self.history=ChatHistory(core.BASE/'chat-history.sqlite3')
+        self.approval_policy=ApprovalPolicy(core.BASE/'approval-policy.json')
         previous=self.history.list_conversations()
         self.conversation_id=previous[0][0] if previous else self.history.create(core.PROJECTS.resolve())
         self.loading_chat=False
@@ -120,7 +122,25 @@ class App:
         self.conversation_button=self.button(header,'Start conversation',self.toggle_conversation,accent=True)
         self.conversation_button.pack(side='right')
         self.speak_enabled=tk.BooleanVar(value=True)
-        tk.Label(main,text='Code, prepare projects, and work with your files.',bg=BG,fg=MUTED).pack(anchor='w',pady=(7,18))
+        policy_bar=tk.Frame(main,bg=BG)
+        policy_bar.pack(fill='x',pady=(8,8))
+        tk.Label(policy_bar,text='Tool permissions:',bg=BG,fg=MUTED).pack(side='left')
+        self.policy_labels={
+            'ask':'Ask before each action',
+            'session_write':'Allow project writes this session',
+            'session_all':'Allow writes + PowerShell this session',
+            'always_write':'Always allow project writes',
+            'always_all':'Always allow writes + PowerShell'
+        }
+        self.policy_choice=tk.StringVar(value=self.policy_labels[self.approval_policy.mode(self.cwd)])
+        self.policy_picker=ttk.Combobox(policy_bar,values=list(self.policy_labels.values()),
+                                        textvariable=self.policy_choice,state='readonly',width=40)
+        self.policy_picker.pack(side='left',padx=8)
+        self.policy_picker.bind('<<ComboboxSelected>>',self.change_permission_policy)
+        self.button(policy_bar,'Reset',self.reset_permission_policy).pack(side='left')
+        tk.Label(main,text='Permissions apply to the selected project. Spoken file commands still need transcript confirmation.',
+                 bg=BG,fg=MUTED,font=('Segoe UI',8)).pack(anchor='w',pady=(0,9))
+        tk.Label(main,text='Code, prepare projects, and work with your files.',bg=BG,fg=MUTED).pack(anchor='w',pady=(0,9))
 
         # Reserve the composer and voice controls before allocating the chat pane.
         controls=tk.Frame(main,bg=BG)
@@ -169,6 +189,35 @@ class App:
         threading.Thread(target=prepare_model,daemon=True).start()
         self.composer.focus_set()
 
+    def refresh_permission_policy(self):
+        if hasattr(self,'policy_choice'):
+            self.policy_choice.set(self.policy_labels[self.approval_policy.mode(self.cwd)])
+
+    def reset_permission_policy(self):
+        self.approval_policy.set_mode(self.cwd,'ask')
+        self.refresh_permission_policy()
+        self.status.set('Tool permissions reset: ask before each action.')
+
+    def change_permission_policy(self,event=None):
+        choice=self.policy_choice.get()
+        mode=next((key for key,label in self.policy_labels.items() if label==choice),'ask')
+        if mode=='always_all':
+            allowed=messagebox.askyesno('Persistent PowerShell access',
+                'This grants Kesara persistent permission to WRITE files in this project AND RUN arbitrary PowerShell commands without asking again.\\n\\n'
+                'PowerShell is not sandboxed and may access files outside the project. '
+                'Only enable for a trusted project and trusted instructions. Continue?',
+                parent=self.root)
+            if not allowed:
+                self.refresh_permission_policy();return
+        elif mode=='session_all':
+            allowed=messagebox.askyesno('Session PowerShell access',
+                'For this running Kesara session, commands may execute without further approval. '
+                'PowerShell is not restricted to the project directory. Continue?',parent=self.root)
+            if not allowed:
+                self.refresh_permission_policy();return
+        self.approval_policy.set_mode(self.cwd,mode)
+        self.status.set('Tool permissions for this project: '+self.policy_labels[mode])
+
     def button(self,parent,text,command,accent=False):
         return tk.Button(parent,text=text,command=command,bg=ACCENT if accent else CARD,fg=BG if accent else TEXT,activebackground='#8af0cf' if accent else '#304159',activeforeground=BG if accent else TEXT,relief='flat',borderwidth=0,padx=13,pady=9,cursor='hand2',font=('Segoe UI',10,'bold' if accent else 'normal'))
 
@@ -211,6 +260,7 @@ class App:
             if project and Path(project).is_dir():
                 self.cwd=Path(project).resolve()
                 self.folder_text.set(str(self.cwd))
+                self.refresh_permission_policy()
             self.refresh_history()
         finally:
             self.loading_chat=False
@@ -383,6 +433,9 @@ class App:
         return 'break'
 
     def confirm(self,description):
+        if self.approval_policy.allows(self.cwd,description):
+            diagnostic('approval_auto_granted',scope=self.approval_policy.mode(self.cwd))
+            return True
         event=threading.Event()
         decision={'allow':False}
         self.emit('approval',(description,event,decision))
@@ -406,13 +459,27 @@ class App:
         detail=scrolledtext.ScrolledText(window,bg=PANEL,fg=TEXT,wrap='word',font=('Consolas',10),relief='flat',padx=12,pady=12)
         detail.pack(fill='both',expand=True,padx=20)
         detail.insert('1.0',description); detail.configure(state='disabled')
-        def finish(allow):
+        def finish(allow,scope='once'):
+            if allow and scope!='once':
+                kind,_=self.approval_policy.action_details(description)
+                if kind=='shell':
+                    label='for this session' if scope=='session' else 'persistently'
+                    accepted=messagebox.askyesno('PowerShell permission',
+                         'Allow arbitrary PowerShell commands '+label+' without future prompts? '
+                         'PowerShell can access files outside this project.',parent=window)
+                    if not accepted:return
+                self.approval_policy.grant(self.cwd,description,scope)
+                self.refresh_permission_policy()
             decision['allow']=allow; event.set()
             self.pending=None; self.approval_window=None
             window.destroy()
         bar=tk.Frame(window,bg=BG); bar.pack(fill='x',padx=20,pady=18)
         self.button(bar,'Decline',lambda:finish(False)).pack(side='left')
-        self.button(bar,'Allow this action',lambda:finish(True),accent=True).pack(side='right')
+        self.button(bar,'Allow once',lambda:finish(True),accent=True).pack(side='left',padx=8)
+        kind,_=self.approval_policy.action_details(description)
+        if kind:
+            self.button(bar,'Allow session',lambda:finish(True,'session')).pack(side='left',padx=8)
+            self.button(bar,'Always allow',lambda:finish(True,'always')).pack(side='left',padx=8)
         window.protocol('WM_DELETE_WINDOW',lambda:finish(False))
         window.grab_set()
         self.status.set('Waiting for your approval')
