@@ -518,8 +518,8 @@ class App:
     def spoken_prose(text):
         """Convert response to speech without truncating its explanation."""
         # Never read full code blocks aloud; they remain available in chat.
-        cleaned=re.sub(r'```[\\s\\S]*?```', ' Code example is available in chat. ', text)
-        cleaned=re.sub(r'(?m)^#{1,6}\\s+', '', cleaned)
+        cleaned=re.sub(r'```[\s\S]*?```', ' Code example is available in chat. ', text)
+        cleaned=re.sub(r'(?m)^#{1,6}\s+', '', cleaned)
         cleaned=re.sub(r'[*_`]', '', cleaned)
         return cleaned.strip()
 
