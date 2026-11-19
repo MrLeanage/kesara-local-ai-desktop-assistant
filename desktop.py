@@ -833,7 +833,7 @@ class App:
                         if self.conversation and not self.review_voice_pending:
                             try:review_enabled=bool(json.loads(VOICE_SETTINGS.read_text(encoding='utf-8')).get('review_transcripts',False))
                             except (OSError,ValueError):review_enabled=False
-                            if review_enabled or requires_voice_review(value):
+                            if review_enabled or requires_voice_review(value) or self.approval_policy.mode(self.cwd)!='ask':
                                 self.review_voice_pending=True
                                 self.status.set('Voice command needs confirmation. Correct the transcript and press Send; no file action has run.')
                                 self.root.deiconify();self.root.lift()
