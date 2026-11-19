@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 MODES=('ask','session_write','session_all','always_write','always_all')
-ACTION_TYPES=('write','mkdir','shell')
+ACTION_TYPES=('write','mkdir','copy','shell')
 
 class ApprovalPolicy:
     def __init__(self, store):
@@ -50,6 +50,9 @@ class ApprovalPolicy:
 
     @staticmethod
     def action_details(description):
+        if description.startswith('COPY '):
+            parts=description[5:].split(' -> ',1)
+            return ('copy',parts[1].strip()) if len(parts)==2 else (None,None)
         if description.startswith('MKDIR '):
             return 'mkdir',description.split('\n',1)[0][6:].strip()
         if description.startswith('WRITE '):
@@ -63,7 +66,7 @@ class ApprovalPolicy:
         kind,target=self.action_details(description)
         if kind is None:
             return False
-        if kind in ('write','mkdir'):
+        if kind in ('write','mkdir','copy'):
             if not target:
                 return False
             root=Path(project).resolve()
@@ -76,7 +79,7 @@ class ApprovalPolicy:
         mode=self.mode(project)
         if mode in ('session_all','always_all'):
             return True
-        return kind in ('write','mkdir') and mode in ('session_write','always_write')
+        return kind in ('write','mkdir','copy') and mode in ('session_write','always_write')
 
     def grant(self,project,description,scope):
         kind,target=self.action_details(description)
