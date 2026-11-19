@@ -41,6 +41,8 @@ class App:
         self.last_voice_transcript_at=0.0
         self.last_spoken_reply=''
         self.speech_in_progress=False
+        self.voice_reply_full=None
+        self.voice_reply_visible=''
         self.speech_id=0
         self.speech_stream_queue=None
         self.speech_stream_cursor=0
@@ -361,6 +363,7 @@ class App:
             memory.append(text[10:]); core.MEMORY.write_text(json.dumps(memory,indent=2),encoding='utf-8')
             self.append('Kesara','Saved to memory.','kesara'); return 'break'
         self.speaker.stop()
+        self.voice_reply_full=None;self.voice_reply_visible=''
         self.speech_id+=1;self.speech_in_progress=False
         if self.speech_stream_queue is not None:self.speech_stream_queue.put(None)
         self.speech_stream_queue=None;self.speech_stream_cursor=0
@@ -579,6 +582,7 @@ class App:
                         except queue.Empty:continue
                         if part is None:break
                         if identifier!=self.speech_id:break
+                        self.emit('speech_chunk_started',(identifier,part))
                         self.speaker.speak(part)
                 except Exception as exc:self.emit('voice_error',str(exc))
                 finally:self.emit('speech_done',identifier)
@@ -594,7 +598,9 @@ class App:
         self.speech_id+=1;identifier=self.speech_id
         self.speech_in_progress=True;self.expression('speaking')
         def work():
-            try: self.speaker.speak(spoken)
+            try:
+                self.emit('speech_chunk_started',(identifier,spoken))
+                self.speaker.speak(spoken)
             except Exception as exc: self.emit('voice_error',str(exc))
             finally:self.emit('speech_done',identifier)
         threading.Thread(target=work,daemon=True).start()
@@ -633,17 +639,26 @@ class App:
                     elif value.startswith('Listening'):self.expression('listening')
                 elif kind=='assistant': self.append('Kesara',value,'kesara')
                 elif kind=='answer':
-                    if self.streaming_reply:
-                        self.stream_reply(value);self.finish_stream()
+                    if self.conversation and self.speak_enabled.get():
+                        # Show speech in step with what Kesara is actually
+                        # saying, instead of dumping the model's fast tokens.
+                        self.voice_reply_full=value
                         self.history.add(self.conversation_id,'kesara',value)
                         self.refresh_history()
-                    else:self.append('Kesara',value,'kesara')
-                    self.status.set('Ready')
-                    if self.speak_enabled.get():
                         if not self.stream_speech(value,final=True):self.speak(value)
-                    else:self.expression('idle')
+                    else:
+                        if self.streaming_reply:
+                            self.stream_reply(value);self.finish_stream()
+                            self.history.add(self.conversation_id,'kesara',value)
+                            self.refresh_history()
+                        else:self.append('Kesara',value,'kesara')
+                        if self.speak_enabled.get():
+                            if not self.stream_speech(value,final=True):self.speak(value)
+                        else:self.expression('idle')
+                    self.status.set('Speaking...' if self.speech_in_progress else 'Ready')
                 elif kind=='answer_partial':
-                    self.stream_reply(value);self.status.set('Replying...')
+                    if not self.conversation:self.stream_reply(value)
+                    self.status.set('Preparing spoken reply...' if self.conversation else 'Replying...')
                     self.stream_speech(value)
                 elif kind=='tool': self.append('Tool result',value,'tool')
                 elif kind=='approval': self.approval(value)
@@ -654,7 +669,8 @@ class App:
                 elif kind=='done':
                     if self.speech_stream_queue is not None:
                         self.speech_stream_queue.put(None);self.speech_stream_queue=None
-                    self.finish_stream()
+                    if not (self.conversation and self.voice_reply_full is not None):
+                        self.finish_stream()
                     self.set_busy(False)
                     if len(self.messages)>24: self.messages=self.messages[-24:]
                     if not self.speech_in_progress:self.expression('idle')
@@ -663,9 +679,13 @@ class App:
                 elif kind=='recording_seconds':
                     self.recording_seconds=value
                     self.status.set(f'Listening · {value:.0f}s — speak, then pause.' if self.conversation else f'Listening · {value:.0f}s — speak, then click Done')
+                elif kind=='speech_started':
+                    self.expression('listening');self.status.set('I can hear you — keep talking.')
+                elif kind=='speech_ended':
+                    self.status.set('You finished speaking — transcribing...')
                 elif kind=='processing_voice':
                     self.expression('thinking')
-                    self.status.set('Transcribing locally with Whisper. This can take a few seconds...')
+                    self.status.set('Transcribing your speech locally...')
                     self.mic_button.configure(text='Transcribing...',state='disabled')
                 elif kind=='no_speech':
                     if not self.conversation:self.append('Microphone check',value,'system')
@@ -739,8 +759,17 @@ class App:
                         elif self.review_voice_pending:
                             self.status.set('Transcript ready to review. Correct the text and press Send.')
                         else:self.root.after(500,self.maybe_listen)
+                elif kind=='speech_chunk_started':
+                    identifier,part=value
+                    if identifier==self.speech_id and self.conversation and self.voice_reply_full is not None:
+                        self.voice_reply_visible+=(' ' if self.voice_reply_visible else '')+part
+                        self.stream_reply(self.voice_reply_visible)
                 elif kind=='speech_done':
                     if value==self.speech_id:
+                        if self.conversation and self.voice_reply_full is not None:
+                            self.stream_reply(self.voice_reply_full)
+                            self.finish_stream()
+                            self.voice_reply_full=None;self.voice_reply_visible=''
                         self.speech_in_progress=False;self.expression('thinking' if self.busy else 'idle')
                         self.root.after(500,self.maybe_listen)
         except queue.Empty: pass
