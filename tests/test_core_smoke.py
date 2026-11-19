@@ -86,6 +86,31 @@ class MultiModelRoutingTests(unittest.TestCase):
                     self.assertEqual(kesara.request([]),'offline')
                     local.assert_called_once()
 
+    def test_cloud_to_cloud_fallback_requires_explicit_configuration(self):
+        config={**model_router.DEFAULT_SETTINGS,'provider':'gemini','cloud_consent':True,
+                'fallback':True,'fallback_provider':'groq',
+                'models':model_router.DEFAULT_MODELS.copy()}
+        with patch.object(model_router,'configuration',return_value=config):
+            def simulate(provider,model,messages,settings):
+                if provider=='gemini':raise model_router.ModelError('Rate limit',True)
+                self.assertEqual(provider,'groq')
+                return '{"action":"answer","text":"ok"}'
+            with patch.object(model_router,'call_cloud',side_effect=simulate) as cloud:
+                with patch.object(kesara,'request_ollama') as local:
+                    answer=kesara.request([])
+                    self.assertIn('ok',answer)
+                    self.assertEqual(cloud.call_count,2)
+                    local.assert_not_called()
+
+    def test_secondary_provider_not_used_without_fallback(self):
+        config={**model_router.DEFAULT_SETTINGS,'provider':'gemini','cloud_consent':True,
+                'fallback':False,'fallback_provider':'groq',
+                'models':model_router.DEFAULT_MODELS.copy()}
+        with patch.object(model_router,'configuration',return_value=config):
+            with patch.object(model_router,'call_cloud',side_effect=model_router.ModelError('Unavailable',True)) as cloud:
+                with self.assertRaises(model_router.ModelError):kesara.request([])
+                cloud.assert_called_once()
+
     def test_auth_failure_does_not_fallback_or_lose_privacy_boundary(self):
         config={**model_router.DEFAULT_SETTINGS,'provider':'gemini','cloud_consent':True,
                 'fallback':True,'models':model_router.DEFAULT_MODELS.copy()}
