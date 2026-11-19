@@ -160,5 +160,20 @@ class SpokenResponseTests(unittest.TestCase):
         self.assertNotIn('print(',speech)
         self.assertIn('Review the result.',speech)
 
+
+class RecognitionConfigurationTests(unittest.TestCase):
+    def test_recognition_prompt_does_not_invent_technical_sentence(self):
+        opts=voice.recognition_options({'recognition_mode':'accurate'},[])
+        self.assertEqual(opts['beam_size'],5)
+        self.assertNotIn('initial_prompt',opts)
+        with_names=voice.recognition_options({'recognition_mode':'balanced'},['Kesara'])
+        self.assertIn('Kesara',with_names['initial_prompt'])
+        self.assertNotIn('Technical software engineering conversation',with_names['initial_prompt'])
+
+    def test_microphone_setting_resolved_by_name(self):
+        with patch.object(voice,'voice_options',return_value={'microphone_name':'USB Microphone'}):
+            self.assertEqual(voice.preferred_microphone([(0,'Webcam'),(3,'USB Microphone')]),3)
+            self.assertIsNone(voice.preferred_microphone([(0,'Webcam')]))
+
 if __name__=='__main__':
     unittest.main()
