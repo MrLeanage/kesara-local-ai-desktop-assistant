@@ -211,6 +211,29 @@ class SpeechCorrectionsTests(unittest.TestCase):
         self.assertEqual(corrections,[('foo','bar')])
 
 
+class TranscriptSafetyTests(unittest.TestCase):
+    def test_repeating_parakeet_phrase_is_rejected(self):
+        self.assertTrue(voice.repeated_transcript('Pure names. Pure names. Pure names. Pure names.'))
+        self.assertTrue(voice.repeated_transcript('Hello hello hello hello hello hello'))
+        self.assertFalse(voice.repeated_transcript('Hi Kesara, please explain your coding capabilities.'))
+        self.assertFalse(voice.repeated_transcript('Hi Kesara'))
+
+    def test_speech_clip_removes_leading_trailing_silence(self):
+        class FakeArray:
+            def __init__(self,length):
+                self.length=length
+            def __len__(self):
+                return self.length
+            def __getitem__(self,key):
+                return (key.start,key.stop)
+        fake_vad=SimpleNamespace(
+            get_speech_timestamps=Mock(return_value=[{'start':16000,'end':24000}]),
+            VadOptions=lambda **kwargs:kwargs)
+        with patch.dict('sys.modules',{'faster_whisper.vad':fake_vad}):
+            self.assertEqual(voice.speech_clip(FakeArray(48000)),(12000,28000))
+            self.assertEqual(voice.speech_clip(FakeArray(48000),16000),(12000,28000))
+
+
 class ParakeetIntegrationTests(unittest.TestCase):
     def test_engine_selection_defaults_to_whisper(self):
         with patch.object(voice,'voice_options',return_value={}):
