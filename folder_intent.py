@@ -39,18 +39,18 @@ def explicit_mkdir_request(text):
             # Accept only a trailing absolute path, never inferred locations.
             if not (DRIVE.match(parent) or parent.startswith('/')):
                 return None
-    if os.name=='nt':
-        if not DRIVE.match(parent) and not Path(parent).is_absolute():
-            return None
-    else:
-        if DRIVE.match(parent) or not Path(parent).is_absolute():
-            return None
+    # Syntax extraction stays platform-neutral for regression testing.
+    # target_for_request validates native path semantics before touching disk.
+    if not (DRIVE.match(parent) or parent.startswith('/')):
+        return None
     return parent,folder
 
 def target_for_request(text):
     parsed=explicit_mkdir_request(text)
     if parsed is None:return None
     parent,folder=parsed
+    if os.name!='nt' and DRIVE.match(parent):
+        return None
     root=Path(parent).expanduser().resolve()
     target=(root/folder).resolve()
     if target.parent!=root:
