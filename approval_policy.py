@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 MODES=('ask','session_write','session_all','always_write','always_all')
-ACTION_TYPES=('write','shell')
+ACTION_TYPES=('write','mkdir','shell')
 
 class ApprovalPolicy:
     def __init__(self, store):
@@ -50,6 +50,8 @@ class ApprovalPolicy:
 
     @staticmethod
     def action_details(description):
+        if description.startswith('MKDIR '):
+            return 'mkdir',description.split('\n',1)[0][6:].strip()
         if description.startswith('WRITE '):
             return 'write',description.split('\n',1)[0][6:].strip()
         if description.startswith('RUN PowerShell in '):
@@ -61,7 +63,7 @@ class ApprovalPolicy:
         kind,target=self.action_details(description)
         if kind is None:
             return False
-        if kind=='write':
+        if kind in ('write','mkdir'):
             if not target:
                 return False
             root=Path(project).resolve()
@@ -74,7 +76,7 @@ class ApprovalPolicy:
         mode=self.mode(project)
         if mode in ('session_all','always_all'):
             return True
-        return kind=='write' and mode in ('session_write','always_write')
+        return kind in ('write','mkdir') and mode in ('session_write','always_write')
 
     def grant(self,project,description,scope):
         kind,target=self.action_details(description)
@@ -82,7 +84,7 @@ class ApprovalPolicy:
             return
         if scope not in ('session','always'):
             raise ValueError('Unsupported grant scope')
-        if kind=='write':
+        if kind in ('write','mkdir'):
             new_mode='session_write' if scope=='session' else 'always_write'
         else:
             new_mode='session_all' if scope=='session' else 'always_all'
