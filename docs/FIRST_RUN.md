@@ -37,3 +37,13 @@ Branch: `feature/kesara-core-history-agent`. This release uses **the existing fr
 
 ## Report results
 Capture Python compile/test results, whether GUI started, conversation persistence, listening/speaking behavior and one rejected/approved write. Open an issue with error tracebacks if a gate fails. This branch is **ready for local verification**, not yet verified on Windows.
+
+## Voice chat from the small floating window (P0 follow-up)
+1. Ensure Whisper is ready (the voice button enables after recognition initialization). Ollama can initialize on its first request, but the configured model must be installed.
+2. Click **Start voice chat** in the **small floating waveform window**. You do **not** need to open the main chat workspace.
+3. Speak naturally, then pause. Kesara should automatically stop recording, transcribe, send the utterance to local Ollama, speak the reply aloud and begin listening for the next turn.
+4. Confirm the small window visibly cycles through **Listening → Transcribing/Thinking → Speaking → Listening**; the full chat maintains the transcript for later review.
+5. Click **End voice chat** to end the conversation. Changes to files and shell commands still require a manual approval window.
+6. If voice cannot start, open the main workspace for the model/voice error. Test `ollama list` and verify the `qwen2.5-coder:3b` model.
+
+**Scope:** This is automatic turn-taking with silence endpoint detection and sentence-streamed text-to-speech. It is not yet full-duplex streaming speech-to-speech: listening pauses while Kesara speaks, and voice interruption/barge-in and true simultaneous audio streams remain future work. The existing transcript UI still shows text for review; it does not require a manual Send during voice mode.
