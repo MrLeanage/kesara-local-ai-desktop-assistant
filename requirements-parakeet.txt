@@ -1,0 +1,3 @@
+# Optional, free, local NVIDIA Parakeet ASR backend
+# Install only when choosing Parakeet in Voice settings.
+sherpa-onnx>=1.13.0,<3.0

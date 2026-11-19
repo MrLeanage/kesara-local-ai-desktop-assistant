@@ -9,6 +9,8 @@ import queue
 import subprocess
 import threading
 import time
+from speech_corrections import apply_corrections, parse_corrections
+from turn_detection import TurnDetector, last_speech_end
 
 BASE=Path(__file__).resolve().parent
 MODEL_PATH=BASE/'speech-model'/'whisper-small.en'
@@ -28,43 +30,197 @@ def audio_level(data):
     db=20*math.log10(max(rms,1)/32768)
     return max(0,min(100,int((db+60)*2))),rms
 
+MODEL_REPOSITORY='Systran/faster-whisper-small.en'
+REQUIRED_MODEL_FILES=('model.bin','config.json','tokenizer.json','vocabulary.txt')
+
+MODEL_CHOICES={
+    'small.en':('Systran/faster-whisper-small.en',BASE/'speech-model'/'whisper-small.en'),
+    'medium.en':('Systran/faster-whisper-medium.en',BASE/'speech-model'/'whisper-medium.en'),
+}
+_loaded_model_key=None
+
+def chosen_speech_engine():
+    engine=voice_options().get('speech_engine','whisper')
+    return engine if engine in ('whisper','parakeet') else 'whisper'
+
+def chosen_speech_model():
+    key=voice_options().get('speech_model','small.en')
+    return key if key in MODEL_CHOICES else 'small.en'
+
+def missing_model_files(model_key=None):
+    key=model_key or chosen_speech_model()
+    folder=MODEL_CHOICES[key][1]
+    return [name for name in REQUIRED_MODEL_FILES if not (folder/name).is_file()]
+
+def ensure_speech_model(on_status=None):
+    """Install only the selected offline speech engine; no paid cloud API."""
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import ensure_model
+        return ensure_model(on_status)
+    key=chosen_speech_model()
+    repository,folder=MODEL_CHOICES[key]
+    missing=missing_model_files(key)
+    if not missing:
+        return False
+    if on_status:
+        on_status('Downloading '+key+' speech model for local use...')
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=repository,local_dir=str(folder),
+                          allow_patterns=list(REQUIRED_MODEL_FILES))
+    except Exception as exc:
+        raise RuntimeError('Unable to download '+key+' offline model: '+str(exc)) from exc
+    missing=missing_model_files(key)
+    if missing:
+        raise RuntimeError('Incomplete speech model: '+', '.join(missing))
+    if on_status:
+        on_status('Speech model '+key+' downloaded. Loading recognition...')
+    return True
+
 def load_model():
-    global _model
+    global _model,_loaded_model_key
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import load_recognizer
+        return load_recognizer()
+    key=chosen_speech_model()
     with _lock:
-        if _model is None:
+        if _model is None or _loaded_model_key!=key:
             from faster_whisper import WhisperModel
-            if any(not (MODEL_PATH/name).is_file() for name in ('model.bin','config.json','tokenizer.json','vocabulary.txt')): raise RuntimeError('Offline Whisper model files are not ready.')
-            _model=WhisperModel(str(MODEL_PATH),device='cpu',compute_type='int8',cpu_threads=2,num_workers=1,local_files_only=True)
+            missing=missing_model_files(key)
+            if missing:
+                raise RuntimeError('Offline Whisper model files are not ready: '+', '.join(missing))
+            _model=WhisperModel(str(MODEL_CHOICES[key][1]),device='cpu',
+                                compute_type='int8',cpu_threads=2,
+                                num_workers=1,local_files_only=True)
+            _loaded_model_key=key
     return _model
 
 def microphones():
     import sounddevice as sd
     return [(i,d['name']) for i,d in enumerate(sd.query_devices()) if d['max_input_channels']>0]
 
+def voice_options():
+    try:
+        data=json.loads(SETTINGS.read_text(encoding='utf-8'))
+        return data if isinstance(data,dict) else {}
+    except (OSError,ValueError):
+        return {}
+
 def recognition_names():
-    try: values=json.loads(SETTINGS.read_text(encoding='utf-8')).get('recognition_names',[])
-    except (OSError,ValueError):values=['Kesara']
+    values=voice_options().get('recognition_names',['Kesara'])
     if not isinstance(values,list):values=['Kesara']
     return [v.strip()[:60] for v in values[:30] if isinstance(v,str) and v.strip()]
+
+def preferred_microphone(devices=None):
+    """Resolve a saved device by name; PortAudio indices can change on reboot."""
+    saved=voice_options().get('microphone_name')
+    if not saved:
+        return None
+    devices=devices if devices is not None else microphones()
+    for index,name in devices:
+        if name==saved:
+            return index
+    return None
+
+def recognition_options(settings=None, names=None):
+    """Neutral prompt avoids biasing Whisper toward invented technical words."""
+    settings=settings if settings is not None else voice_options()
+    names=names if names is not None else recognition_names()
+    beam=2 if settings.get('recognition_mode')=='balanced' else 5
+    options=dict(language='en',beam_size=beam,temperature=0,
+                 condition_on_previous_text=False,
+                 vad_filter=True,
+                 vad_parameters={'threshold':0.42,'min_silence_duration_ms':600},
+                 hallucination_silence_threshold=2)
+    # Only user-provided vocabulary as hints; do not prime complete sentences.
+    if names:
+        options['initial_prompt']='Proper names: '+', '.join(names)+'.'
+    return options
+
+def speech_clip(waveform, sample_rate=16000):
+    """Trim leading/trailing nonspeech with Silero VAD, preserving 250ms of context.
+
+    Avoid sending a long mostly-silent recording to offline Parakeet, which can
+    produce repeated hallucinated words. This is independent of transcription.
+    """
+    from faster_whisper.vad import get_speech_timestamps, VadOptions
+    spans=get_speech_timestamps(waveform,
+        VadOptions(threshold=0.42,min_speech_duration_ms=140,
+                   min_silence_duration_ms=350,speech_pad_ms=0),
+        sampling_rate=sample_rate)
+    if not spans:
+        return waveform[:0]
+    pad=int(sample_rate*0.25)
+    start=max(0,spans[0]['start']-pad)
+    end=min(len(waveform),spans[-1]['end']+pad)
+    return waveform[start:end]
+
+def repeated_transcript(text):
+    """Reject severe ASR loops instead of sending manufactured instructions."""
+    import re
+    tokens=re.findall(r"[a-z0-9']+",text.lower())
+    if len(tokens)<6:
+        return False
+    for size in range(1,min(6,len(tokens)//3)+1):
+        unit=tokens[:size]
+        if len(tokens)>=size*3 and all(tokens[i:i+size]==unit for i in
+                                         range(0,len(tokens),size)):
+            return True
+    return False
 
 def transcribe_audio(data,rate):
     import numpy as np
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
     if rate!=16000:
         waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,np.arange(len(waveform)),waveform).astype(np.float32)
-    names=recognition_names()
-    prompt='Names and vocabulary: '+', '.join(names)+'.' if names else None
-    try: settings=json.loads(SETTINGS.read_text(encoding='utf-8'))
-    except (OSError,ValueError):settings={}
-    beam=5 if settings.get('recognition_mode')=='accurate' else 2
-    options=dict(language='en',beam_size=beam,temperature=0,condition_on_previous_text=False,vad_filter=True,vad_parameters={'threshold':0.35,'min_silence_duration_ms':500},initial_prompt=prompt,hallucination_silence_threshold=2)
+    if chosen_speech_engine()=='parakeet':
+        from parakeet_backend import transcribe
+        waveform=speech_clip(waveform)
+        if len(waveform)<int(16000*.18):
+            return ''
+        # Keep the decoder on a short speech-focused utterance, not 30s of
+        # silent room noise which causes transducer repetition loops.
+        transcript=transcribe(waveform)
+        if repeated_transcript(transcript):
+            diagnostic('asr_repetition_discarded',engine='parakeet',characters=len(transcript))
+            return ''
+        return apply_corrections(transcript,parse_corrections(voice_options().get('speech_corrections','')))
+    options=recognition_options()
+    beam=options['beam_size']
     segments,_=load_model().transcribe(waveform,**options)
     segments=list(segments)
     if beam<5 and segments and min(segment.avg_logprob for segment in segments)<-1.0:
         options['beam_size']=5;segments=list(load_model().transcribe(waveform,**options)[0])
-    return ' '.join(segment.text.strip() for segment in segments).strip()
+    # Whisper can hallucinate plausible phrases during noise or silence.
+    # Filter low-confidence segments before routing any words to the agent.
+    transcript=filter_transcript_segments(segments)
+    return apply_corrections(transcript,parse_corrections(voice_options().get('speech_corrections','')))
 
-def speech_finished(data,rate,pause_seconds=1.2):
+def filter_transcript_segments(segments):
+    """Return only credible recognized speech; never manufacture text."""
+    accepted=[segment.text.strip() for segment in segments if
+              segment.text.strip() and
+              segment.avg_logprob >= -0.85 and
+              segment.no_speech_prob < 0.65]
+    return ' '.join(accepted).strip()
+
+def contains_real_speech(data,rate):
+    """Independent VAD gate; prevents silence from reaching Whisper/agent."""
+    import numpy as np
+    from faster_whisper.vad import get_speech_timestamps,VadOptions
+    waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.
+    if rate!=16000:
+        waveform=np.interp(np.arange(int(len(waveform)*16000/rate))*rate/16000,
+                           np.arange(len(waveform)),waveform).astype(np.float32)
+    if len(waveform)<int(0.65*16000):
+        return False
+    timestamps=get_speech_timestamps(
+        waveform,VadOptions(threshold=.55,min_speech_duration_ms=350,
+                            min_silence_duration_ms=500,speech_pad_ms=0),
+        sampling_rate=16000)
+    return sum(segment['end']-segment['start'] for segment in timestamps)>=int(.4*16000)
+
+def speech_finished(data,rate,pause_seconds=1.8):
     import numpy as np
     from faster_whisper.vad import get_speech_timestamps,VadOptions
     waveform=np.frombuffer(data,dtype=np.int16).astype(np.float32)/32768.0
@@ -83,9 +239,12 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
     import sounddevice as sd
     load_model()
     info=sd.query_devices(device,'input')
-    rate=16000
-    try: sd.check_input_settings(device=device,channels=1,dtype='int16',samplerate=rate)
-    except Exception: rate=int(info['default_samplerate'])
+    # Capture at the microphone's native sample rate to avoid relying on
+    # unstable driver-side sample rate conversion. Convert to 16 kHz for VAD/ASR.
+    rate=int(info['default_samplerate'])
+    if rate<=0:
+        rate=16000
+    sd.check_input_settings(device=device,channels=1,dtype='int16',samplerate=rate)
     audio=queue.Queue(maxsize=400)
     chunks=[]
     blocks=0
@@ -101,30 +260,56 @@ def _record(stop, emit, device=None,auto_end=False,discard_on_stop=False):
         emit('recording_seconds',captured_frames/rate)
         try: audio.put_nowait(bytes(data))
         except queue.Full: dropped+=1
-    with sd.RawInputStream(samplerate=rate,blocksize=1600,device=device,dtype='int16',channels=1,callback=callback):
+    with sd.RawInputStream(samplerate=rate,blocksize=max(1,int(rate/10)),device=device,dtype='int16',channels=1,callback=callback):
         diagnostic('recording_started',device=str(info['name']),sample_rate=rate)
-        emit('status','Listening — speak now. Click Done when finished (30-second limit).')
+        emit('status','Listening — speak naturally, then pause.' if auto_end else 'Listening — speak, then click Done.')
         start=time.monotonic()
         last_endpoint_check=0
-        while not stop.is_set() and time.monotonic()-start<30:
+        detector=TurnDetector() if auto_end else None
+        endpoint=None
+        while not stop.is_set() and time.monotonic()-start<(38 if auto_end else 30):
             try: block=audio.get(timeout=0.2)
-            except queue.Empty: continue
+            except queue.Empty:
+                if auto_end and detector:
+                    action=detector.update(time.monotonic()-start)
+                    if action in ('speech_finished','waiting_timeout','turn_timeout'):
+                        endpoint=action
+                        break
+                continue
             blocks+=1
             chunks.append(block)
-            if auto_end and time.monotonic()-last_endpoint_check>.2:
+            elapsed=captured_frames/rate
+            if auto_end and time.monotonic()-last_endpoint_check>.28:
                 last_endpoint_check=time.monotonic()
-                if speech_finished(b''.join(chunks)[-int(rate*2*5):],rate):break
+                # Sliding 2s window for VAD, with a small lead-in for greeting words.
+                recent=b''.join(chunks)[-int(rate*2*2):]
+                end=last_speech_end(recent,rate)
+                if end is not None:
+                    end=elapsed-len(recent)/(rate*2)+end
+                action=detector.update(elapsed,end)
+                if action=='speech_started':
+                    emit('speech_started',None)
+                elif action in ('speech_finished','waiting_timeout','turn_timeout'):
+                    endpoint=action
+                    emit('speech_ended',action)
+                    break
     while not audio.empty():
         chunks.append(audio.get_nowait())
     seconds=captured_frames/rate
     emit('level',0)
+    if endpoint=='waiting_timeout':
+        # Silence is not a request; resume listening rather than hallucinating.
+        diagnostic('voice_no_turn',reason='waiting_timeout',captured_seconds=round(seconds,2))
+        emit('no_speech','No speech detected yet; listening again.')
+        emit('dictation','')
+        return
     if discard_on_stop and stop.is_set():return
     emit('processing_voice',None)
     text=''
     started=time.monotonic()
-    if seconds>=0.4 and peak_rms>=30:
+    if seconds>=0.65 and contains_real_speech(b''.join(chunks),rate):
         text=transcribe_audio(b''.join(chunks),rate)
-    diagnostic('recording_finished',engine='whisper-small.en',blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
+    diagnostic('recording_finished',engine=chosen_speech_engine() if chosen_speech_engine()=='parakeet' else chosen_speech_model(),blocks=blocks,captured_seconds=round(seconds,2),peak_rms=round(peak_rms,1),dropped_blocks=dropped,recognized=bool(text),transcription_seconds=round(time.monotonic()-started,2))
     if not text:
         if seconds<2:
             emit('no_speech',f'Only {seconds:.1f} seconds of audio captured. Click Talk, wait for Listening, speak a full sentence, then click Done.')
