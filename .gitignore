@@ -28,3 +28,7 @@ backups/
 
 # Locally granted tool permissions (never commit)
 approval-policy.json
+
+# Private local model selection and cloud-sharing preferences
+model-settings.json
+model-settings.json.tmp
