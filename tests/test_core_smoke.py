@@ -10,6 +10,7 @@ import parakeet_backend as parakeet
 from turn_detection import TurnDetector
 from voice_safety import requires_voice_review
 from approval_policy import ApprovalPolicy
+from folder_intent import explicit_mkdir_request, target_for_request
 import io
 import tarfile
 from unittest.mock import patch, Mock
@@ -39,6 +40,50 @@ class HistoryTests(unittest.TestCase):
             cid=store.create()
             store.add(cid,'you',' ')
             self.assertEqual(store.messages(cid),[])
+
+class ExplicitFolderRoutingTests(unittest.TestCase):
+    def test_windows_path_before_command_is_parsed_without_guessing(self):
+        text=r'D:\\AI works\\Kesara 2.0. Create a folder called Kesara-2 inside this given folder path.'
+        self.assertEqual(explicit_mkdir_request(text),
+                         (r'D:\\AI works\\Kesara 2.0','Kesara-2'))
+
+    def test_create_in_explicit_parent_not_selected_workspace(self):
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            destination=root/'actual destination'; destination.mkdir()
+            workspace=root/'unrelated workspace';workspace.mkdir()
+            prompt=f'Create a folder called NewModule inside "{destination}"'
+            events=[]; approvals=[]
+            def allow(description):
+                approvals.append(description)
+                return True
+            with patch.object(kesara,'request',side_effect=AssertionError('LLM must not be used')):
+                kesara.run_turn(prompt,[],workspace,lambda k,v:events.append((k,v)),
+                                allow,threading.Event())
+            self.assertTrue((destination/'NewModule').is_dir())
+            self.assertFalse((workspace/'NewModule').exists())
+            self.assertTrue(any('MKDIR ' in line for line in approvals))
+            self.assertTrue(any(k=='answer' and 'Created folder:' in v for k,v in events))
+
+    def test_existing_folder_is_idempotent_and_needs_no_approval(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); target=root/'existing';target.mkdir()
+            result=kesara.execute({'action':'mkdir','path':str(target)},root,
+                                  confirm=lambda description: self.fail('No prompt required'))
+            self.assertIn('already exists',result)
+
+    def test_selected_project_reads_need_no_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/'readme.txt').write_text('correct project',encoding='utf-8')
+            result=kesara.execute({'action':'read','path':'readme.txt'},root,
+                                  confirm=lambda description: self.fail('Read in project should be permitted'))
+            self.assertEqual(result,'correct project')
+
+    def test_unresolvable_folder_destination_does_not_guess(self):
+        self.assertIsNone(explicit_mkdir_request('Create a folder called Demo somewhere.'))
+        self.assertIsNone(target_for_request('Create a folder called Demo inside the given folder'))
 
 class PermissionPolicyTests(unittest.TestCase):
     def test_project_scoped_session_permission_and_reset(self):
