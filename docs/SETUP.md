@@ -90,3 +90,28 @@ Live Windows recognition quality, throughput and memory consumption must be
 measured on the laptop. This is an **offline turn-based recognizer**, not
 full-duplex streaming/barge-in audio. Parakeet does not automatically
 validate the user's intended commands; preserve code/tool approvals.
+
+## Tool approval permissions (Kesara 2.0)
+
+The chat workspace has a **Tool permissions** dropdown available before running any task.
+Choose **Ask before each action** (default), **Allow project writes this session**,
+**Allow writes + PowerShell this session**, **Always allow project writes**, or
+**Always allow writes + PowerShell**. A **Reset** button immediately returns
+that project to the default. Each project has its own selected policy.
+
+Approval dialogs also offer **Decline**, **Allow once**, **Allow session**, and
+**Always allow**. One-time approval never changes the policy. Session grants
+last only until Kesara exits. Persistent grants are saved locally to
+`approval-policy.json` (ignored by Git) and survive restarts.
+
+**Warning:** PowerShell is *not* sandboxed. Persistent or session-wide shell
+permission can execute arbitrary commands under your Windows account and
+access files outside the project. Kesara shows an explicit warning before
+such permission is granted. A persistent write grant is limited to writes
+inside the selected project. Reads outside the project still prompt.
+
+**Voice safety:** Enabling automatic permissions does not remove speech
+verification. When any non-default automatic policy is active, every voice
+transcript requires review in the composer before it can be executed. Spoken
+file commands and paths also require review with the default permission policy.
+Use typed requests to avoid transcription uncertainty.
